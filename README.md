@@ -1,6 +1,6 @@
 # ic-load
 
-This is the extracted repository for the reusable IC'ALPS load pipeline contract.
+This is the extracted repository for the reusable IC'ALPS load pipeline contract and first runnable salvage spine.
 
 It is intentionally separate from `IC-D-LOAD`.
 
@@ -8,7 +8,8 @@ It is intentionally separate from `IC-D-LOAD`.
 
 - Shared pipeline contract for the StackSync-backed load flow
 - Fixed schema context and variable run context
-- Gomplate templates for SQL upsert and association bridge patterns
+- Thin runtime spine for Bronze -> Silver -> dbt -> Gold -> StackSync -> associations
+- SQL rendering for entity upserts, engagement upserts, and association bridge patterns
 - Narrow Repomix bundle inputs for LLM review
 - Devcontainer bootstrap for consistent collaborator setup
 
@@ -17,15 +18,34 @@ It is intentionally separate from `IC-D-LOAD`.
 Validation and approval happen before this project boundary.
 
 This repo covers:
-- PostgreSQL load/upsert patterns
-- dbt-adjacent SQL contract inputs
+- PostgreSQL Bronze load/watermark orchestration
+- Silver gate orchestration
+- dbt as an external boundary
+- Gold upsert and communication engagement SQL rendering
+- explicit StackSync sync checkpoint
 - association bridge SQL
 - collaborator environment standardization
 
 This repo does not cover:
 - Snakemake rule authoring
 - dbt model authoring
-- ad hoc Python transformation logic from the larger legacy workspace
+- Bronze payload archives, benchmark dumps, or `memory/`
+- extraction-side workbook/UI tooling
+
+## Runtime Entry Points
+
+- `python -m pipeline.runner --probe-mode --entity company --bronze-csv-override probe.csv`
+- `python -m pipeline.probe --entity company`
+
+The first probe is intentionally orchestration-focused. It proves stage sequencing and boundary clarity without requiring live production writes.
+
+## Verification
+
+The current salvage spine is covered by:
+
+```powershell
+pytest tests -q -p no:cacheprovider
+```
 
 ## Local Status
 

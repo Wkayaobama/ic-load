@@ -124,17 +124,23 @@ The must-have runtime core is:
 - defined target repo architecture
 - defined legacy import map
 - scaffolded the clean runtime directories
+- implemented `context/` runtime loaders and DB contract
+- implemented `pipeline/state.py` with explicit `GOLD_UPSERT` and `STACKSYNC_SYNC` stages
+- implemented thin Gold, sync, and association executors
+- implemented deterministic SQL rendering in `sql/`
+- implemented the orchestration probe entrypoint
+- added passing probe and SQL contract tests
+- generated rendered SQL outputs under `sql/rendered/`
 
 ### Next Approved Iteration
 
-Start the **first runtime extraction** into the new landing zones.
+Start the **second extraction pass** around the proven salvage spine.
 
 Priority order:
-- port the state machine into `pipeline/`
-- port the cleaned config and DB contract into `context/`
-- extract Silver normalize/validate ownership
-- convert legacy Gold and association SQL into the `sql/` layer
-- port the first high-signal tests
+- replace remaining legacy Silver wrappers with local extracted modules where safe
+- decide whether sibling/parent company association handling belongs in the supported core
+- wire optional live DB/dbt hooks behind the existing thin runtime boundary
+- tighten Repomix bundle generation around the rendered SQL outputs
 
 ## Resume Instruction
 

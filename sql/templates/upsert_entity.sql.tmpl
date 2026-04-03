@@ -1,0 +1,5 @@
+{{- /* Entity upsert template. Source of truth is schema_context.yaml + run_context.yaml. */ -}}
+{{- $entity := getenv "GOMPLATE_ENTITY" -}}
+-- Entity upsert template for {{ $entity }}
+-- Contract: INSERT .. ON CONFLICT .. DO UPDATE
+-- Boundary: Silver/dbt remain outside this template.

@@ -1,0 +1,5 @@
+{{- /* Association bridge template. */ -}}
+{{- $commType := getenv "GOMPLATE_COMM_TYPE" -}}
+{{- $target := getenv "GOMPLATE_ASSOC_TARGET" -}}
+-- Association bridge template for {{ $commType }} -> {{ $target }}
+-- Contract: Pass A StackSync UUID, Pass B legacy fallback, NOT EXISTS idempotency guard.

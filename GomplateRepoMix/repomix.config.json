@@ -9,7 +9,10 @@
     "removeEmptyLines": false
   },
   "include": [
-    "rendered_sql/*.sql",
+    "../sql/rendered/*.sql",
+    "../sql/templates/*.tmpl",
+    "../docs/CANONICAL_EXECUTION_SPEC.md",
+    "../docs/CONTEXT_PACKAGING_PROCESS.md",
     "../ValidationRules/icalps_crm_schema.yaml",
     "../ValidationRules/icalps_import_flags.md",
     "fk_cascade_graph.mmd",

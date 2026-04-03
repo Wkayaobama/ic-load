@@ -1,0 +1,4 @@
+{{- /* Engagement upsert template. */ -}}
+{{- $commType := getenv "GOMPLATE_COMM_TYPE" -}}
+-- Engagement upsert template for {{ $commType }}
+-- Contract: deterministic unique_id plus NOT EXISTS idempotency guard.

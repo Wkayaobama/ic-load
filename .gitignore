@@ -8,3 +8,8 @@ gold_layer/
 memory/
 benchmark/
 artifacts/
+__pycache__/
+.pytest_cache/
+pytest-cache-files*/
+tmp*/
+sql/rendered/test_output/
