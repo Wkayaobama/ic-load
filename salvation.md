@@ -83,12 +83,15 @@ Read these in order:
 1. [docs/CANONICAL_EXECUTION_SPEC.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/CANONICAL_EXECUTION_SPEC.md)
 2. [docs/FUNCTIONALITY_COVERAGE_MATRIX.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/FUNCTIONALITY_COVERAGE_MATRIX.md)
 3. [docs/CONTEXT_PACKAGING_PROCESS.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/CONTEXT_PACKAGING_PROCESS.md)
+4. [docs/TARGET_REPO_ARCHITECTURE.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/TARGET_REPO_ARCHITECTURE.md)
+5. [docs/LEGACY_IMPORT_MAP.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/LEGACY_IMPORT_MAP.md)
 
 ## Commit Anchors
 
 - `984afa2` Bootstrap `ic-load` reusable pipeline repo
 - `7a1e2bf` Add canonical execution spec and coverage matrix
 - `3db4df9` Clarify sync and context packaging process
+- `dad5071` Add salvation re-entry reference
 
 ## 85% Target Definition
 
@@ -118,18 +121,20 @@ The must-have runtime core is:
 - defined canonical execution contract
 - defined 85% coverage matrix
 - defined packaging process
+- defined target repo architecture
+- defined legacy import map
+- scaffolded the clean runtime directories
 
 ### Next Approved Iteration
 
-Build the **target repo architecture and import map** for the runtime core.
+Start the **first runtime extraction** into the new landing zones.
 
-That means defining and then populating:
-- `context/`
-- `pipeline/`
-- `sql/`
-- `dbt/`
-- `tests/`
-- `docs/`
+Priority order:
+- port the state machine into `pipeline/`
+- port the cleaned config and DB contract into `context/`
+- extract Silver normalize/validate ownership
+- convert legacy Gold and association SQL into the `sql/` layer
+- port the first high-signal tests
 
 ## Resume Instruction
 
