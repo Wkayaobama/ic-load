@@ -21,8 +21,11 @@ The goal is to preserve the core functionality while removing legacy sprawl.
 - Silver normalization and validation gate
 - dbt transformation boundary
 - Gold upsert patterns
+- bidirectional StackSync sync contract
 - Engagement upsert patterns
 - Association bridge patterns
+- Gomplate SQL templating
+- Repomix context packaging
 - Devcontainer and Codespaces setup
 - Validation and run context artifacts
 
@@ -32,6 +35,9 @@ The goal is to preserve the core functionality while removing legacy sprawl.
 - full dashboard/FastAPI extraction stack
 - broad legacy exploration scripts
 - gold-layer deduplication research artifacts
+- Bronze CSV payload archives
+- benchmark CSVs
+- memory/reference dumps as runtime assets
 
 ## Canonical Boundary
 
@@ -43,13 +49,66 @@ The true pipeline boundary is:
 4. Silver validation is the blocking quality gate
 5. dbt transforms `staging -> intermediate -> marts`
 6. SQL upserts write to `hubspot.*` on the shared StackSync PostgreSQL instance
-7. StackSync syncs those rows to HubSpot
-8. Association bridge SQL creates missing CRM associations
+7. StackSync bidirectionally syncs `hubspot.*` with HubSpot CRM and materializes HubSpot IDs back into PostgreSQL
+8. Association bridge SQL creates missing CRM associations after the synced records and IDs exist
 
 Important:
 - Snakemake governs validation/approval orchestration, not dbt or SQL upserts
 - dbt stays a separate transformation boundary and must not be reimplemented inside Gomplate
 - the shared StackSync PostgreSQL instance is part of the production contract
+- the Gold write path is incomplete unless bidirectional StackSync sync is available
+- association bridge depends on post-sync IDs, not just pre-sync staged records
+
+## Packaging Process
+
+The repack process itself is part of the architecture.
+
+### Gomplate Role
+
+Gomplate is used for:
+- SQL upsert patterns
+- association bridge SQL patterns
+- fixed/variable contract rendering from schema/run context
+
+Gomplate is not used for:
+- dbt model authoring
+- Python transformation logic
+- Snakemake orchestration
+
+This keeps templating constrained to the most error-prone but structurally repetitive SQL.
+
+### Repomix Role
+
+Repomix is used to preserve contextual engineering for later project phases.
+
+Its job is to package only the schema-governed artifacts required to regenerate or review the SQL patterns correctly:
+- rendered SQL
+- `icalps_crm_schema.yaml`
+- `icalps_import_flags.md`
+- FK cascade graph
+- schema/run context
+
+This is intentionally narrow. It prevents the next implementation phase from being contaminated by legacy execution logs, historical notebooks, or ad hoc extraction material.
+
+### File Selection Rule
+
+Repomix bundle selection is critical:
+- include only schema-governed files and rendered SQL outputs
+- exclude Bronze extracts, benchmark dumps, legacy memory files, and large artifacts
+- exclude anything that would bias later generation toward instance-specific noise instead of the canonical contract
+
+## Codespace Surface Rule
+
+Bronze-layer payloads and legacy reference material are not part of the clean Codespace/devcontainer surface.
+
+That means the new repo should not carry:
+- `bronze_layer/` payloads
+- `gold_layer/` payloads
+- benchmark CSV exports
+- raw `memory/` dumps
+- artifact directories from prior runs
+
+Those can remain external references during salvage, but they should not be packaged as part of the runtime repo.
 
 ## Minimal Runtime Flow
 
@@ -109,7 +168,12 @@ Important:
    - `hubspot.notes`
    - `hubspot.meetings` when provisioned
 
-6. Association bridge
+6. StackSync bidirectional sync checkpoint
+   Requirement:
+   - wait until synced `hubspot.*` rows have stable CRM IDs and record IDs
+   - only then run association creation
+
+7. Association bridge
    Targets:
    - notes -> contact/company/deal
    - calls -> contact/company
@@ -130,6 +194,14 @@ Important:
 - Company: `stacksync_record_id_9vpp8v`
 - Contact: `stacksync_record_id_nd85zc`
 - Deal: `stacksync_record_id`
+
+### StackSync Sync Invariant
+
+- `hubspot.*` tables are not just outputs; they are the bidirectional sync surface
+- write to `hubspot.*` first
+- let StackSync sync and hydrate IDs
+- run association bridge second
+- never collapse these into a single blind step
 
 ### Association Type IDs
 

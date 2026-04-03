@@ -3,3 +3,8 @@ repomix_bundle/
 rendered_sql/
 *.log
 *.parquet
+bronze_layer/
+gold_layer/
+memory/
+benchmark/
+artifacts/
