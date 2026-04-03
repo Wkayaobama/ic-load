@@ -1,0 +1,69 @@
+{{- $schema := datasource "schema" -}}
+{{- $run := datasource "run" -}}
+{{- $entity := getenv "GOMPLATE_ENTITY" -}}
+{{- $cfg := index $schema.entities $entity -}}
+{{- $runCfg := index $run.entities $entity -}}
+-- Rendered SQL upsert pattern
+-- Entity: {{ $entity }}
+-- Run ID: {{ $run.run_id }}
+-- Boundary: SQL upserts only. Validation and dbt stay outside this template.
+
+{{- if eq $entity "Company" }}
+UPDATE {{ $cfg.gold_table }} AS hs
+SET
+    name = stg.comp_name,
+    icalps_comp_website = stg.comp_website,
+    city = stg.address_city,
+    country = stg.icalps_country,
+    state = stg.address_state,
+    zip = stg.address_postcode,
+    industry = stg.comp_sector,
+    phone = stg.icalps_companyphone,
+    comp_type = stg.icalps_companytype,
+    comp_sector = stg.comp_sector
+FROM {{ $cfg.silver_table }} AS stg
+WHERE hs.{{ $cfg.upsert.match_column }} = stg.comp_companyid::text
+  AND stg.{{ $cfg.upsert.load_status_column }} IN ('NEW', 'MODIFIED');
+{{- end }}
+
+{{- if eq $entity "Person" }}
+UPDATE {{ $cfg.gold_table }} AS hs
+SET
+    email = stg.icalps_email,
+    firstname = stg.pers_firstname,
+    lastname = stg.pers_lastname,
+    jobtitle = stg.icalps_title,
+    phone = stg.icalps_businessphone,
+    mobilephone = stg.icalps_mobilephone,
+    city = stg.address_city,
+    state = stg.address_state,
+    country = stg.icalps_country,
+    zip = stg.address_postcode,
+    lastmodifieddate = stg.pers_updateddate::timestamp
+FROM {{ $cfg.silver_table }} AS stg
+WHERE hs.{{ $cfg.upsert.match_column }} = stg.pers_personid::text
+  AND stg.{{ $cfg.upsert.load_status_column }} IN ('NEW', 'MODIFIED');
+{{- end }}
+
+{{- if eq $entity "Opportunity" }}
+UPDATE {{ $cfg.gold_table }} AS hs
+SET
+    dealname = stg.oppo_description,
+    pipeline = COALESCE(stg.hubspot_pipeline_id, hs.pipeline),
+    dealstage = COALESCE(stg.hubspot_dealstage_id, hs.dealstage),
+    amount = stg.icalps_forecast::numeric,
+    icalps_dealforecast = stg.icalps_forecast::numeric,
+    icalps_dealcertainty = stg.icalps_certainty::numeric,
+    icalps_dealtype = stg.oppo_type,
+    icalps_dealnotes = stg.oppo_notes,
+    icalps_netamount_k__ = {{ index $cfg.upsert.computed_columns "net_amount" }},
+    icalps_net_weighted_amount = {{ index $cfg.upsert.computed_columns "net_weighted_amount" }},
+    closedate = stg.icalps_closedate::timestamp
+FROM {{ $cfg.silver_table }} AS stg
+WHERE hs.{{ $cfg.upsert.match_column }} = stg.oppo_opportunityid::text
+  AND stg.{{ $cfg.upsert.load_status_column }} IN ('NEW', 'MODIFIED');
+{{- end }}
+
+-- Run context:
+-- bronze_file={{ $runCfg.bronze_file }}
+-- previous_bronze_file={{ $runCfg.previous_bronze_file }}

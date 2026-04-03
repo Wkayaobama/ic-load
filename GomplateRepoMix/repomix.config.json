@@ -1,0 +1,29 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "repomix_bundle/icalps_pipeline_context.xml",
+    "style": "xml",
+    "headerText": "IC'ALPS pipeline schema bundle. Scope: rendered SQL upsert patterns and association bridge patterns only. Snakemake, dbt model authoring, and Python transforms are intentionally out of scope.",
+    "showLineNumbers": true,
+    "removeComments": false,
+    "removeEmptyLines": false
+  },
+  "include": [
+    "rendered_sql/*.sql",
+    "../ValidationRules/icalps_crm_schema.yaml",
+    "../ValidationRules/icalps_import_flags.md",
+    "fk_cascade_graph.mmd",
+    "schema_context.yaml",
+    "run_context.yaml"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "*.env",
+      "*.log",
+      "*.parquet",
+      "rendered_python/**"
+    ]
+  }
+}

@@ -1,0 +1,146 @@
+schema_version: "icalps_crm_schema.yaml v1.1.0"
+governance_authority: "COO / CRM Data Governance"
+boundary:
+  validation_gate: "Snakemake validate_entity/review_gate stop before transformation"
+  transformations:
+    - "bronze_loader.py loads approved artifacts into staging.*"
+    - "dbt transforms staging -> intermediate -> marts"
+    - "SQL upserts write to hubspot.* on the shared StackSync PostgreSQL instance"
+    - "StackSync syncs hubspot.* to HubSpot"
+    - "association bridge SQL creates missing engagement/object associations"
+  non_goals:
+    - "Do not template Snakemake rules here"
+    - "Do not template dbt models here"
+    - "Do not template Python transformation logic here"
+
+entity_order:
+  - Company
+  - Person
+  - Opportunity
+  - Communication
+
+entities:
+  Company:
+    bronze_table: "staging.stg_company"
+    silver_table: "staging.stg_company_normalised"
+    gold_table: "hubspot.companies"
+    primary_key:
+      source: "Comp_CompanyId"
+      canonical: "icalps_company_id"
+    foreign_keys:
+      - field: "icalps_contact_id"
+        references: "hubspot.contacts.icalps_contact_id"
+        on_violation: "WARN"
+    upsert:
+      match_column: "icalps_company_id"
+      load_status_column: "_load_status"
+      allowed_statuses: ["NEW", "MODIFIED"]
+
+  Person:
+    bronze_table: "staging.stg_contact"
+    silver_table: "staging.stg_contact_normalised"
+    gold_table: "hubspot.contacts"
+    primary_key:
+      source: "Pers_PersonId"
+      canonical: "icalps_contact_id"
+    foreign_keys:
+      - field: "icalps_company_id"
+        references: "hubspot.companies.icalps_company_id"
+        on_violation: "REJECT"
+    upsert:
+      match_column: "icalps_contact_id"
+      load_status_column: "_load_status"
+      allowed_statuses: ["NEW", "MODIFIED"]
+
+  Opportunity:
+    bronze_table: "staging.stg_opportunity"
+    silver_table: "staging.stg_opportunity_normalised"
+    gold_table: "hubspot.deals"
+    primary_key:
+      source: "Oppo_OpportunityId"
+      canonical: "icalps_deal_id"
+    foreign_keys:
+      - field: "icalps_company_id"
+        references: "hubspot.companies.icalps_company_id"
+        on_violation: "REJECT"
+      - field: "icalps_contact_id"
+        references: "hubspot.contacts.icalps_contact_id"
+        on_violation: "WARN"
+    upsert:
+      match_column: "icalps_deal_id"
+      load_status_column: "_load_status"
+      allowed_statuses: ["NEW", "MODIFIED"]
+      computed_columns:
+        weighted_forecast: "icalps_forecast::numeric * (icalps_certainty::numeric / 100.0)"
+        net_amount: "icalps_forecast::numeric - icalps_icalps_cost::numeric"
+        net_weighted_amount: "(icalps_forecast::numeric - icalps_icalps_cost::numeric) * (icalps_certainty::numeric / 100.0)"
+
+  Communication:
+    idempotency_prefix: "icalps_"
+    idempotency_source_key: "icalps_communication_id"
+    bridge_tables:
+      Calls: "staging.fct_communication_calls"
+      Notes: "staging.fct_communication_notes"
+      Tasks: "staging.fct_communication_tasks"
+    gold_tables:
+      Calls: "hubspot.calls"
+      Notes: "hubspot.notes"
+      Tasks: "hubspot.tasks"
+    foreign_keys:
+      - field: "legacy_company_id"
+        references: "hubspot.companies.icalps_company_id"
+        on_violation: "WARN"
+      - field: "legacy_contact_id"
+        references: "hubspot.contacts.icalps_contact_id"
+        on_violation: "WARN"
+      - field: "legacy_deal_id"
+        references: "hubspot.deals.icalps_deal_id"
+        on_violation: "WARN"
+
+stacksync:
+  shared_instance: true
+  company_record_id_column: "stacksync_record_id_9vpp8v"
+  contact_record_id_column: "stacksync_record_id_nd85zc"
+  deal_record_id_column: "stacksync_record_id"
+
+association_type_ids:
+  calls_company: 182
+  calls_contact: 194
+  notes_company: 190
+  notes_contact: 202
+  notes_deal: 214
+  tasks_company: 192
+  tasks_contact: 204
+
+association_bridge:
+  idempotency_guard: "NOT EXISTS"
+  supported_patterns:
+    - comm_type: "Calls"
+      targets: ["company", "contact"]
+    - comm_type: "Notes"
+      targets: ["company", "contact", "deal"]
+    - comm_type: "Tasks"
+      targets: ["company", "contact"]
+
+stage_mappings:
+  validation_gate: "SILVER_VALIDATE"
+  transform_stages:
+    - "bronze_loader"
+    - "dbt"
+    - "sql_upsert"
+    - "stacksync"
+    - "association_bridge"
+
+variance_thresholds:
+  flag_and_continue_pct: 5
+  stop_execution_pct: 25
+
+fk_cascade:
+  - from: "Company"
+    to: []
+  - from: "Person"
+    to: ["Company"]
+  - from: "Opportunity"
+    to: ["Company", "Person"]
+  - from: "Communication"
+    to: ["Company", "Person", "Opportunity"]

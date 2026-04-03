@@ -1,0 +1,48 @@
+{{- $schema := datasource "schema" -}}
+{{- $run := datasource "run" -}}
+{{- $commType := getenv "GOMPLATE_COMM_TYPE" -}}
+{{- $target := getenv "GOMPLATE_ASSOC_TARGET" -}}
+{{- $commCfg := index $schema.entities.Communication.bridge_tables $commType -}}
+{{- $goldTable := index $schema.entities.Communication.gold_tables $commType -}}
+{{- $commTypeLower := "" -}}
+{{- if eq $commType "Calls" }}{{- $commTypeLower = "calls" -}}{{- end -}}
+{{- if eq $commType "Notes" }}{{- $commTypeLower = "notes" -}}{{- end -}}
+{{- if eq $commType "Tasks" }}{{- $commTypeLower = "tasks" -}}{{- end -}}
+{{- $assocKey := printf "%s_%s" $commTypeLower $target -}}
+{{- $assocTypeId := index $schema.association_type_ids $assocKey -}}
+{{- $assocTable := printf "hubspot.associations_%s_%s" $commTypeLower $target -}}
+{{- $leftIdColumn := printf "%s_id" $target -}}
+{{- $rightIdColumn := printf "%s_id" $commTypeLower -}}
+{{- $legacyColumn := printf "legacy_%s_id" $target -}}
+{{- $targetGoldTable := printf "hubspot.%ss" $target -}}
+{{- if eq $target "company" }}{{- $targetGoldTable = "hubspot.companies" -}}{{- end -}}
+{{- if eq $target "contact" }}{{- $targetGoldTable = "hubspot.contacts" -}}{{- end -}}
+{{- if eq $target "deal" }}{{- $targetGoldTable = "hubspot.deals" -}}{{- end -}}
+-- Rendered SQL association bridge
+-- Communication type: {{ $commType }}
+-- Association target: {{ $target }}
+-- Run ID: {{ $run.run_id }}
+-- Invariant: shared StackSync instance, fixed association_type_id, unique_id prefix 'icalps_', NOT EXISTS idempotency guard.
+
+INSERT INTO {{ $assocTable }} (
+    association_type_id,
+    {{ $leftIdColumn }},
+    {{ $rightIdColumn }}
+)
+SELECT DISTINCT
+    {{ $assocTypeId }} AS association_type_id,
+    target.id AS {{ $leftIdColumn }},
+    comm.id AS {{ $rightIdColumn }}
+FROM {{ $commCfg }} AS fct
+INNER JOIN {{ $goldTable }} AS comm
+    ON comm.unique_id = '{{ $schema.entities.Communication.idempotency_prefix }}' || fct.icalps_communication_id::text
+INNER JOIN {{ $targetGoldTable }} AS target
+    ON target.icalps_{{ $target }}_id = fct.{{ $legacyColumn }}::text
+WHERE fct.{{ $legacyColumn }} IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM {{ $assocTable }} AS assoc
+      WHERE assoc.{{ $rightIdColumn }} = comm.id
+        AND assoc.{{ $leftIdColumn }} = target.id
+        AND assoc.association_type_id = {{ $assocTypeId }}
+  );

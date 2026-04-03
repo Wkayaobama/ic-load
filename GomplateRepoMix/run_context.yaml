@@ -1,0 +1,110 @@
+run_id: "20260327_120000"
+
+entities:
+  Company:
+    run_id: "20260327_120000"
+    bronze_file: "bronze_layer/Bronze_Company_20260327_120000.csv"
+    previous_bronze_file: "bronze_layer/Bronze_Company_20260325_120000.csv"
+    record_counts:
+      expected_total: 2919
+      staging_count: 2919
+      gold_matched: 2868
+      gold_unmatched: 51
+    delta_counts:
+      new: 11
+      modified: 2908
+      unchanged: 0
+      deleted: 0
+    phase_flags:
+      bronze_loaded: true
+      silver_normalised: true
+      silver_validated: true
+      dbt_built: true
+      gold_upserted: false
+
+  Person:
+    run_id: "20260327_120000"
+    bronze_file: "bronze_layer/Bronze_Person_20260327_120000.csv"
+    previous_bronze_file: "bronze_layer/Bronze_Person_20260325_120000.csv"
+    record_counts:
+      expected_total: 6126
+      staging_count: 6126
+      gold_matched: 4689
+      gold_unmatched: 1437
+    delta_counts:
+      new: 23
+      modified: 6103
+      unchanged: 0
+      deleted: 0
+    phase_flags:
+      bronze_loaded: true
+      silver_normalised: true
+      silver_validated: true
+      dbt_built: true
+      gold_upserted: false
+
+  Opportunity:
+    run_id: "20260327_120000"
+    bronze_file: "bronze_layer/Bronze_Opportunity_20260327_120000.csv"
+    previous_bronze_file: "bronze_layer/Bronze_Opportunity_20260325_120000.csv"
+    record_counts:
+      expected_total: 758
+      staging_count: 758
+      gold_matched: 645
+      gold_unmatched: 113
+    delta_counts:
+      new: 17
+      modified: 741
+      unchanged: 0
+      deleted: 0
+    phase_flags:
+      bronze_loaded: true
+      silver_normalised: true
+      silver_validated: true
+      dbt_built: true
+      gold_upserted: false
+
+communication:
+  run_id: "20260327_120000"
+  bronze_file: "bronze_layer/Bronze_Communication_20260327_120000.csv"
+  previous_bronze_file: "bronze_layer/Bronze_Communication_20260325_120000.csv"
+  record_counts:
+    expected_total: 77615
+  delta_counts:
+    new: 8
+    modified: 9992
+    unchanged: 0
+    deleted: 8
+  types:
+    Calls:
+      run_id: "20260327_120000"
+      expected_count: 5959
+      phase_flags:
+        gold_upserted: false
+        associations_loaded: false
+    Notes:
+      run_id: "20260327_120000"
+      expected_count: 11994
+      phase_flags:
+        gold_upserted: false
+        associations_loaded: false
+    Tasks:
+      run_id: "20260327_120000"
+      expected_count: 145
+      phase_flags:
+        gold_upserted: false
+        associations_loaded: false
+    Meetings:
+      run_id: "20260327_120000"
+      expected_count: 59043
+      phase_flags:
+        gold_upserted: false
+        associations_loaded: false
+
+pipeline_phase_flags:
+  phase_0_validation_gate_complete: true
+  phase_1_bronze_loader_complete: true
+  phase_2_dbt_complete: true
+  phase_3_sql_upsert_complete: false
+  phase_4_stacksync_complete: false
+  phase_5_association_bridge_complete: false

@@ -1,0 +1,36 @@
+{
+  "name": "IC_Load",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
+  "workspaceFolder": "/workspaces/icalps",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/icalps,type=bind,consistency=cached",
+  "features": {
+    "ghcr.io/devcontainers-contrib/features/gomplate:1": {
+      "version": "3.11.7"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    "ghcr.io/devcontainers-contrib/features/yq:1": {
+      "version": "4"
+    }
+  },
+  "containerEnv": {
+    "ICALPS_PROJECT_ROOT": "/workspaces/icalps",
+    "PYTHONPATH": "/workspaces/icalps"
+  },
+  "runArgs": [
+    "--env-file",
+    ".devcontainer/devcontainer.env"
+  ],
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "redhat.vscode-yaml",
+        "dbt-labs.dbt-power-user"
+      ]
+    }
+  }
+}

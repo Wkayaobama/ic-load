@@ -1,0 +1,1177 @@
+# =============================================================================
+#  Canonical CRM Schema — IcAlps Entity Validation Rules
+#  Authority  : COO / CRM Data Governance
+#  Scope      : Team = IcAlps | icalps_* prefixed properties
+#  Version    : 1.1.0 (non-destructive update from 1.0.0)
+#
+#  GOVERNING RULE (v1.1):
+#    All icalps_-prefixed properties are required=true BY DEFAULT.
+#    Exceptions are explicitly annotated with:
+#      required: false
+#      required_exception: "<reason>"
+#    Valid exception reasons:
+#      - POST_ASSOCIATION  : populated by HubSpot after record linking, not at import
+#      - DEPRECATED        : legacy/duplicate field; canonical field takes precedence
+#      - GENERATED         : auto-generated at upsert; not expected in source extract
+#      - OPTIONAL_CONTEXT  : genuinely optional business data (no operational dependency)
+#
+#  FILL RATE INTERPRETATION (v1.1 corrected):
+#    Fill rate is NOT a required/optional signal.
+#    It is used to identify cross-company property overlap:
+#      - A property present at high fill in both SEALSQ and IcAlps namespaces
+#        should be reconciled into the IcAlps ontology as a shared canonical field.
+#      - Low fill on an icalps_ property flags a data quality gap to investigate,
+#        NOT a signal to relax the required constraint.
+#
+#  Hierarchy: System > Entity > Record > Team > View > Index
+#  Generated : 2026-02-24 | Updated: 2026-02-24
+# =============================================================================
+
+crm:
+  name: "Unified CRM"
+  version: "1.1.0"
+  governing_team: "IcAlps"
+  schema_authority: "COO"
+
+  fill_rate_policy:
+    purpose: "Cross-company overlap detection only"
+    required_threshold_note: "Fill rate does NOT determine required/optional status"
+    overlap_signal: >
+      When an icalps_ property and a sealsq_ (or HubSpot native) property carry
+      the same semantic meaning and both show meaningful fill, the icalps_ field
+      is designated the canonical field and the counterpart is aliased or deprecated.
+    data_quality_note: >
+      Low fill on a required icalps_ field is a DATA QUALITY ALERT, not a
+      schema relaxation. Flag for investigation before import.
+
+  owner_mapping:
+    rule: >
+      All owner-type fields across every entity (deal owner, company owner,
+      contact owner) MUST be mapped to icalps_ownerid as the single canonical
+      owner field. No separate owner field should be created per entity.
+    canonical_field: "icalps_ownerid"
+    source_field_aliases:
+      - "deal_owner"
+      - "company_owner"
+      - "contact_owner"
+      - "IcAlps_ownerid"
+      - "icalps_ownerid"
+      - "comp_primaryuserid"
+    on_import: "Resolve all aliases to icalps_ownerid; validate against HubSpot Owner list"
+
+  # ---------------------------------------------------------------------------
+  entities:
+
+    # =========================================================================
+    Company:
+      description: "Organisation or business entity sourced from IC'ALPS CRM"
+      source_object: "companies"
+      primary_key: "icalps_company_id"
+
+      properties:
+
+        # PK
+        icalps_company_id:
+          internal_name: "icalps_company_id"
+          type: string
+          fill_rate: "23.25%"
+          fill_note: "Moderate fill — data quality gap; investigate missing records pre-import"
+          required: true
+          unique: true
+          constraint: "Must not be null or empty; used as FK reference in Contact and Deal"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#company_type"
+
+        # Datetime
+        icalps_createdate:
+          internal_name: "icalps_createdate"
+          type: datetime
+          fill_rate: "22.32%"
+          required: true
+          format: "YYYY-MM-DDTHH:MM:SS"
+          constraint: "Valid ISO 8601 datetime; must not be in the future at import time"
+
+        # Address block
+        icalps_full_address:
+          internal_name: "icalps_full_address"
+          type: string
+          fill_rate: "22.31%"
+          required: true
+          constraint: "Free-text full address; max 500 chars"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#addr_street"
+
+        icalps_street_address:
+          internal_name: "icalps_street_address"
+          type: string
+          fill_rate: "22.13%"
+          required: true
+          constraint: "Street line only (maps to addr_address1); max 255 chars"
+          overlap_canonical: true
+          overlap_note: "Canonical form of addr_address1/addr_street from source system"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#addr_street"
+
+        icalps_addresscity:
+          internal_name: "icalps_addresscity"
+          type: string
+          fill_rate: "21.99%"
+          required: true
+          constraint: "City name; max 100 chars; no numeric-only values"
+
+        icalps_address_postcode:
+          internal_name: "icalps_address_postcode"
+          type: number
+          fill_rate: "20.15%"
+          required: true
+          constraint: "Numeric postal code; 4–10 digits; no leading spaces"
+
+        icalps_companystate:
+          internal_name: "icalps_companystate"
+          type: string
+          fill_rate: "12.44%"
+          fill_note: "Low fill — data quality gap; required field, investigate missing records"
+          required: true
+          constraint: "Region/state/canton; max 100 chars"
+
+        icalps_address_state:
+          internal_name: "icalps_address_state"
+          type: string
+          fill_rate: "0.53%"
+          fill_note: "Critical fill gap — likely unmapped in source; required but expect high rejection rate"
+          required: true
+          constraint: "ISO region/state code preferred; max 50 chars"
+
+        icalps_address_country:
+          internal_name: "icalps_address_country"
+          type: enumeration
+          fill_rate: "16.07%"
+          required: true
+          allowed_values: [FR, NL, BE, CH, DE, IT, AT, NO, SE, UK, ES, IE, BG, FI, DK, HK, US, GR, GB, CA, CZ, CN]
+          constraint: "ISO 2-letter country code"
+          import_normalisation: "UK → GB (both present in source; normalise to GB)"
+
+        # Company classification
+        icalps_companytype:
+          internal_name: "icalps_companytype"
+          type: enumeration
+          fill_rate: "22.29%"
+          required: true
+          allowed_values: [Prospect, Supplier, Customer, Agent]
+          constraint: "Value must match allowed_values exactly (case-sensitive)"
+          overlap_canonical: true
+          overlap_note: "Canonical form of HubSpot native 'type' field for IcAlps records"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#company_type"
+
+        icalps_companystatus:
+          internal_name: "icalps_companystatus"
+          type: enumeration
+          fill_rate: "21.22%"
+          required: true
+          allowed_values: [Active, Inactive, Closed]
+          default: "Active"
+          constraint: "Defaults to Active on import if missing after normalisation attempt"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#comp_status"
+
+        icalps_company_sector:
+          internal_name: "icalps_company_sector"
+          type: enumeration
+          fill_rate: "18.08%"
+          fill_note: "Moderate fill gap — required; source may use legacy labels"
+          required: true
+          allowed_values:
+            - Recherche
+            - Industriel
+            - Medical
+            - Consumer
+            - Spacial
+            - Agent
+            - Semiconducteur
+            - Transportation
+            - Autre
+            - Telecom
+            - IoT
+            - Militaire
+            - Aeronautique
+          constraint: "If value does not match, reject record and log for manual remapping"
+
+        icalps_industry:
+          internal_name: "icalps_industry"
+          type: enumeration
+          fill_rate: "8.18%"
+          fill_note: "Low fill — required; distinct from icalps_company_sector (HubSpot native codes)"
+          required: true
+          allowed_values:
+            - RESEARCH
+            - HOSPITAL_HEALTH_CARE
+            - MECHANICAL_OR_INDUSTRIAL_ENGINEERING
+            - ELECTRICAL_ELECTRONIC_MANUFACTURING
+            - MEDICAL_DEVICES
+            - CONSUMER_SERVICES
+            - INFORMATION_TECHNOLOGY_AND_SERVICES
+            - INDUSTRIAL_AUTOMATION
+          constraint: "HubSpot-native industry codes; uppercase snake_case only"
+
+        # Contact / ownership
+        icalps_company_owner_full:
+          internal_name: "icalps_company_owner_full"
+          type: string
+          fill_rate: "18.42%"
+          required: true
+          constraint: "Full display name of owning salesperson; must reconcile to HubSpot Owner record"
+          overlap_note: "Source alias: comp_primaryuserid — map to icalps_ownerid on import"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#owner_mapping"
+
+        icalps_ownerid:
+          internal_name: "icalps_ownerid"
+          type: string
+          fill_rate: "N/A — cross-entity canonical"
+          required: true
+          unique: false
+          constraint: "Canonical owner field for ALL entities; must resolve to a valid HubSpot Owner ID"
+          overlap_canonical: true
+          overlap_note: >
+            Single canonical owner field. Source aliases comp_primaryuserid,
+            deal_owner, company_owner, contact_owner ALL map here.
+
+        icalps_contact_id:
+          internal_name: "icalps_contact_id"
+          type: string
+          fill_rate: "14.07%"
+          required: true
+          note: "Denormalised FK on Company — references Contact.icalps_contact_id; primary contact linkage at import"
+
+        icalps_companyprimarycontact:
+          internal_name: "icalps_companyprimarycontact"
+          type: string
+          fill_rate: "8.76%"
+          fill_note: "Low fill — required; display name form of primary contact"
+          required: true
+          constraint: "Must reconcile with Contact.icalps_contact_id if both present"
+
+        icalps_groupsize:
+          internal_name: "icalps_groupsize"
+          type: number
+          fill_rate: "8.64%"
+          required: true
+          constraint: "Integer; must be > 0 if populated"
+
+        # Web / contact info
+        icalps_comp_website:
+          internal_name: "icalps_comp_website"
+          type: string
+          fill_rate: "7.56%"
+          required: true
+          format: "url"
+          constraint: "Must start with https:// or http://; domain extracted for deduplication"
+
+        icalps_companyphone:
+          internal_name: "icalps_companyphone"
+          type: string
+          fill_rate: "15.08%"
+          required: true
+          format: "phone"
+          constraint: "E.164 format preferred; e.g. +33612345678"
+          overlap_canonical: true
+          overlap_note: "Canonical form of source field 'phone'; maps to HubSpot phone"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#phone"
+
+        icalps_companyemail:
+          internal_name: "icalps_companyemail"
+          type: string
+          fill_rate: "2.08%"
+          fill_note: "Very low fill — data quality gap"
+          required: true
+          format: "email"
+          constraint: "regex: ^[^@]+@[^@]+\\.[^@]+$"
+
+        icalps_sitegroup:
+          internal_name: "icalps_sitegroup"
+          type: string
+          fill_rate: "7.56%"
+          required: true
+          constraint: "Internal site group label; free-text; max 100 chars"
+
+        # Source / acquisition
+        icalps_compsource:
+          internal_name: "icalps_compsource"
+          type: enumeration
+          fill_rate: "0%"
+          fill_note: "Zero fill — critical data quality gap; required field"
+          required: true
+          allowed_values:
+            - Phone
+            - Web
+            - Prospection
+            - Salon
+            - Prospection LinkedIn
+            - Prospection Medicen
+            - EW
+            - Prospection Medicalp
+            - "Prospection startup ETHZ"
+            - "Prospection VC"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#comp_source"
+
+        icalps_compupdateddate:
+          internal_name: "icalps_compupdateddate"
+          type: date
+          fill_rate: "0%"
+          fill_note: "Zero fill — data quality gap"
+          required: true
+          format: "YYYY-MM-DD"
+
+        # Deprecated / exception fields
+        icalps_city:
+          internal_name: "icalps_city"
+          type: string
+          fill_rate: "1.08%"
+          required: false
+          required_exception: "DEPRECATED"
+          deprecated: true
+          note: "Duplicate of icalps_addresscity — do not populate both; icalps_addresscity is canonical"
+
+        icalps_companyaddress:
+          internal_name: "icalps_companyaddress"
+          type: number
+          fill_rate: "0%"
+          required: false
+          required_exception: "DEPRECATED"
+          deprecated: true
+          note: "Legacy numeric address ID from source system; no semantic value in HubSpot"
+
+      # -----------------------------------------------------------------------
+      # Pipeline thresholds — read by run_company_pipeline.py and dbt tests
+      # Source of truth: tighten these values as StackSync sync cycles complete
+      # -----------------------------------------------------------------------
+      pipeline_thresholds:
+        company_fk_match_min_pct: 85   # Post-Phase-2; raise to 92 after Phase 3a
+        orphan_tolerance: 0            # reconciled rows with zero HubSpot IDs
+        owner_resolution_blocking: false  # WARN on unresolved owners, do not STOP
+        # Sibling association completeness — ASSOC_VALIDATE stage
+        # Presence signal: pers_companyid (contact→child) / oppo_primarycompanyid (deal→child)
+        # If the Silver FK is present, the HubSpot association MUST exist upstream.
+        # Re-run orphan pass: python -m ic_load_pipeline.python.runners.run_company_pipeline --assoc-only
+        contact_assoc_completeness_min_pct: 100  # zero tolerance — every contact FK must resolve
+        deal_assoc_completeness_min_pct: 100     # zero tolerance — every deal FK must resolve
+
+      teams:
+        - name: "IcAlps"
+          views:
+            - name: "IcAlps Company — Full Overview"
+              index_key: "icalps_company_id"
+              display_properties:
+                - icalps_company_id
+                - icalps_companytype
+                - icalps_companystatus
+                - icalps_full_address
+                - icalps_addresscity
+                - icalps_address_country
+                - icalps_companyphone
+                - icalps_company_sector
+                - icalps_ownerid
+            - name: "IcAlps Company — Import Validation"
+              index_key: "icalps_company_id"
+              display_properties:
+                - icalps_company_id
+                - icalps_companytype
+                - icalps_companystatus
+                - icalps_compsource
+                - icalps_addresscity
+                - icalps_address_country
+                - icalps_ownerid
+        - name: "SEALSQ"
+          views:
+            - name: "SEALSQ Cross-Reference"
+              index_key: "icalps_company_id"
+              display_properties:
+                - icalps_company_id
+                - icalps_companytype
+                - icalps_addresscity
+                - icalps_address_country
+
+    # =========================================================================
+    Contact:
+      description: "Person associated with an IcAlps company record"
+      source_object: "contacts"
+      primary_key: "icalps_contact_id"
+
+      properties:
+
+        icalps_contact_id:
+          internal_name: "icalps_contact_id"
+          type: string
+          fill_rate: "19.43%"
+          fill_note: "Just below 20% — data quality gap; PK is always required"
+          required: true
+          unique: true
+          constraint: "Must not be null; IcAlps legacy contact identifier"
+
+        icalps_company_id:
+          internal_name: "icalps_company_id"
+          type: foreign_key
+          fill_rate: "19.48%"
+          required: true
+          reference: "Company.icalps_company_id"
+          constraint: "Must resolve to an existing Company.icalps_company_id; REJECT on dangling FK"
+
+        icalps_temperature:
+          internal_name: "icalps_temperature"
+          type: enumeration
+          fill_rate: "22.12%"
+          required: true
+          allowed_values: [Hot, Warm, Cold]
+          default: "Cold"
+          constraint: "Must match allowed_values; used for lead scoring"
+
+        icalps_contactcreateddate:
+          internal_name: "icalps_contactcreateddate"
+          type: string
+          fill_rate: "19.41%"
+          required: true
+          format: "YYYY-MM-DD"
+          constraint: "Coerce to date on import; REJECT if not parseable as date"
+
+        icalps_addresscity:
+          internal_name: "icalps_addresscity"
+          type: string
+          fill_rate: "19.36%"
+          required: true
+          constraint: "City of contact; max 100 chars"
+
+        icalps_salutations:
+          internal_name: "icalps_salutations"
+          type: string
+          fill_rate: "18.99%"
+          required: true
+          constraint: "e.g. Mr, Mrs, Dr; max 20 chars"
+
+        icalps_perstitle:
+          internal_name: "icalps_perstitle"
+          type: string
+          fill_rate: "18.75%"
+          required: true
+          constraint: "Job title / person title; max 150 chars"
+          overlap_canonical: true
+          overlap_note: "Canonical form of source field pers_title"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#pers_title"
+
+        icalps_contactstate:
+          internal_name: "icalps_contactstate"
+          type: string
+          fill_rate: "10.02%"
+          required: true
+          constraint: "Region or state; max 100 chars"
+
+        icalps_businessphone:
+          internal_name: "icalps_businessphone"
+          type: string
+          fill_rate: "8.30%"
+          required: true
+          format: "phone"
+          constraint: "E.164 format preferred"
+          overlap_canonical: true
+          overlap_note: "Canonical form of source field 'phone' on Contact"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#phone"
+
+        icalps_mobilephone:
+          internal_name: "icalps_mobilephone"
+          type: string
+          fill_rate: "5.17%"
+          required: true
+          format: "phone"
+          constraint: "E.164 format preferred"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#mobile_phone"
+
+        icalps_ownerid:
+          internal_name: "icalps_ownerid"
+          type: string
+          fill_rate: "N/A — cross-entity canonical"
+          required: true
+          constraint: "Canonical owner field; source alias contact_owner maps here"
+          overlap_canonical: true
+
+        # Optional context fields
+        icalps_language:
+          internal_name: "icalps_language"
+          type: string
+          fill_rate: "0%"
+          fill_note: "Zero fill — maps to source comp_gdalangue"
+          required: true
+          constraint: "ISO 639-1 language code; e.g. FR, EN, DE"
+          overlap_note: "Canonical form of source field comp_gdalangue"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#comp_gdalangue"
+
+        icalps_civil:
+          internal_name: "icalps_civil"
+          type: string
+          fill_rate: "0%"
+          fill_note: "Zero fill — civil status field"
+          required: true
+          constraint: "Free text; max 50 chars"
+
+        # Deprecated
+        icalps_contactaddresscity:
+          internal_name: "icalps_contactaddresscity"
+          type: string
+          fill_rate: "0%"
+          required: false
+          required_exception: "DEPRECATED"
+          deprecated: true
+          note: "Duplicate of icalps_addresscity on Contact; icalps_addresscity is canonical"
+
+        icalps_linkedin_url:
+          internal_name: "icalps_linkedin_url"
+          type: string
+          fill_rate: "N/A"
+          required: true
+          format: "url"
+          constraint: "Must contain linkedin.com/in/ pattern if populated"
+          overlap_canonical: true
+          overlap_note: "Canonical form of source field linkedin_url"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#linkedin_url"
+
+        icalps_pers_status:
+          internal_name: "icalps_pers_status"
+          type: string
+          fill_rate: "N/A"
+          required: true
+          constraint: "Person status in source system; max 100 chars"
+          overlap_canonical: true
+          overlap_note: "Canonical form of source field pers_status"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#pers_status"
+
+      teams:
+        - name: "IcAlps"
+          views:
+            - name: "IcAlps Contact Directory"
+              index_key: "icalps_contact_id"
+              display_properties:
+                - icalps_contact_id
+                - icalps_company_id
+                - icalps_salutations
+                - icalps_perstitle
+                - icalps_temperature
+                - icalps_businessphone
+                - icalps_mobilephone
+                - icalps_addresscity
+                - icalps_ownerid
+            - name: "IcAlps Contact Minimal"
+              index_key: "icalps_contact_id"
+              display_properties:
+                - icalps_contact_id
+                - icalps_company_id
+                - icalps_temperature
+                - icalps_ownerid
+        - name: "SEALSQ"
+          views:
+            - name: "SEALSQ Contact Cross-Reference"
+              index_key: "icalps_contact_id"
+              display_properties:
+                - icalps_contact_id
+                - icalps_company_id
+                - icalps_perstitle
+
+    # =========================================================================
+    Deal:
+      description: "Sales opportunity or project record sourced from IC'ALPS"
+      source_object: "deals"
+      primary_key: "icalps_deal_id"
+
+      computed_columns:
+        weighted_forecast:
+          formula: "icalps_dealforecast * (icalps_oppocertainty / 100)"
+          output_field: "icalps_net_weighted_amount"
+          validation: "Warn if stored value diverges from computed by > 0.01"
+        net_amount:
+          formula: "icalps_dealforecast - deal_cost"
+          output_field: "icalps_netamount_k__"
+        net_weighted_amount:
+          formula: "icalps_netamount_k__ * (icalps_oppocertainty / 100)"
+          output_field: "icalps_net_weighted_amount"
+
+      field_aliases:
+        net_amount_canonical: "icalps_netamount_k__"
+        net_amount_deprecated: ["icalps_netamount"]
+        net_weighted_canonical: "icalps_net_weighted_amount"
+        net_weighted_deprecated: ["icalps_netweighted_amount__k__"]
+        note: "Always populate canonical fields; deprecated aliases blocked on write"
+
+      properties:
+
+        icalps_deal_id:
+          internal_name: "icalps_deal_id"
+          type: string
+          fill_rate: "37.61%"
+          required: true
+          unique: true
+          constraint: "Primary IcAlps legacy deal identifier; must not be null"
+
+        icalps_company_id:
+          internal_name: "icalps_company_id"
+          type: foreign_key
+          fill_rate: "38.19%"
+          required: true
+          reference: "Company.icalps_company_id"
+          constraint: "REJECT on dangling FK"
+
+        icalps_contact_id:
+          internal_name: "icalps_contact_id"
+          type: foreign_key
+          fill_rate: "38.02%"
+          required: true
+          reference: "Contact.icalps_contact_id"
+          constraint: "WARN if missing; do not reject deal"
+
+        icalps_ownerid:
+          internal_name: "icalps_ownerid"
+          type: string
+          fill_rate: "35.10%"
+          required: true
+          constraint: "Canonical owner field; source alias deal_owner maps here; must resolve to HubSpot Owner"
+          overlap_canonical: true
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#owner_mapping"
+
+        icalps_dealstatus:
+          internal_name: "icalps_dealstatus"
+          type: enumeration
+          fill_rate: "38.19%"
+          required: true
+          allowed_values: [Abandoned, "Abandonnée", "En cours", "Gagnée", "In Progress", Lost, NoGo, Perdue, Won, Sleep]
+          hubspot_stage_mapping:
+            "No-go":       "Closed Lost"
+            "Abandonnée":  "Closed Lost"
+            "Perdue":      "Closed Lost"
+            "Lost":        "Closed Lost"
+            "Abandoned":   "Closed Lost"
+            "Gagnée":      "Closed Won"
+            "Won":         "Closed Won"
+            "En cours":    "In Progress"
+            "In Progress": "In Progress"
+            "Sleep":       "In Progress"
+            "NoGo":        "Closed Lost"
+          constraint: "Apply hubspot_stage_mapping on upsert to HubSpot dealstage"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#stage"
+
+        icalps_stage:
+          internal_name: "icalps_stage"
+          type: enumeration
+          fill_rate: "37.49%"
+          required: true
+          allowed_values:
+            - "01 - Identification"
+            - "02 - Qualifiée"
+            - "03 - Evaluation technique"
+            - "04 - Construction propositions"
+            - "05 - Négociations"
+          constraint: "Must be consistent with icalps_dealstatus"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#stage"
+
+        icalps_dealcertainty:
+          internal_name: "icalps_dealcertainty"
+          type: string
+          fill_rate: "38.19%"
+          required: true
+          note: "String form — coerce to numeric on import; reconcile with icalps_oppocertainty"
+
+        icalps_oppocertainty:
+          internal_name: "icalps_oppocertainty"
+          type: number
+          fill_rate: "37.55%"
+          required: true
+          validation: "0 <= value <= 100"
+          constraint: "Numeric certainty %; used in weighted forecast computation"
+
+        icalps_dealforecast:
+          internal_name: "icalps_dealforecast"
+          type: number
+          fill_rate: "23.85%"
+          required: true
+          format: "k€"
+          constraint: "Forecast amount in k€; must be >= 0"
+
+        icalps_netamount_k__:
+          internal_name: "icalps_netamount_k__"
+          type: number
+          fill_rate: "37.55%"
+          required: true
+          format: "k€"
+          canonical: true
+          constraint: "Canonical net amount; computed: forecast - cost; must be numeric"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#amount"
+
+        icalps_net_weighted_amount:
+          internal_name: "icalps_net_weighted_amount"
+          type: number
+          fill_rate: "37.55%"
+          required: true
+          format: "k€"
+          canonical: true
+          constraint: "Validated against computed: net_amount * (oppocertainty / 100); warn on discrepancy"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#amount"
+
+        icalps_amount_k__:
+          internal_name: "icalps_amount_k__"
+          type: number
+          fill_rate: "28.10%"
+          required: true
+          format: "k€"
+          constraint: "Gross opportunity amount in k€; must be >= 0"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#amount"
+
+        icalps_dealcompanyid:
+          internal_name: "icalps_dealcompanyid"
+          type: string
+          fill_rate: "37.38%"
+          required: true
+          note: "Legacy string company ID on deal; must match icalps_company_id — WARN on mismatch"
+
+        icalps_dealprimarycontactfirstname:
+          internal_name: "icalps_dealprimarycontactfirstname"
+          type: string
+          fill_rate: "36.91%"
+          required: true
+          constraint: "First name of primary contact; max 100 chars"
+
+        icalps_primarycontactlastname:
+          internal_name: "icalps_primarycontactlastname"
+          type: string
+          fill_rate: "36.91%"
+          required: true
+          constraint: "Last name of primary contact; max 100 chars"
+
+        icalps_primaryoppocontact:
+          internal_name: "icalps_primaryoppocontact"
+          type: string
+          fill_rate: "36.91%"
+          required: true
+          constraint: "Full name of primary opportunity contact; reconcile with Contact.icalps_contact_id"
+
+        icalps_targetclose:
+          internal_name: "icalps_targetclose"
+          type: date
+          fill_rate: "35.04%"
+          required: true
+          format: "YYYY-MM-DD"
+          constraint: "Must be parseable as ISO date; warn if in the past at import"
+
+        icalps_dealcategory:
+          internal_name: "icalps_dealcategory"
+          type: string
+          fill_rate: "23.85%"
+          required: true
+          constraint: "Deal category label; max 100 chars; no empty string"
+
+        icalps_dealtype:
+          internal_name: "icalps_dealtype"
+          type: string
+          fill_rate: "23.85%"
+          required: true
+          constraint: "Type of deal (e.g. NRE, Product, Service); max 100 chars"
+
+        icalps_deal_created_date:
+          internal_name: "icalps_deal_created_date"
+          type: date
+          fill_rate: "21.52%"
+          required: true
+          format: "YYYY-MM-DD"
+          constraint: "Original creation date in source system; must not be in the future"
+
+        icalps_opendate:
+          internal_name: "icalps_opendate"
+          type: date
+          fill_rate: "21.46%"
+          required: true
+          format: "YYYY-MM-DD"
+          constraint: "Date deal opened; must be <= icalps_targetclose if both populated"
+
+        icalps_dealnotes:
+          internal_name: "icalps_dealnotes"
+          type: string
+          fill_rate: "38.19%"
+          required: true
+          constraint: "Free-text notes; max 5000 chars; HTML stripped on import"
+
+        icalps_icalps_cost:
+          internal_name: "icalps_icalps_cost"
+          type: number
+          fill_rate: "N/A"
+          required: true
+          format: "k€"
+          constraint: "Deal cost used in net_amount computation; must be >= 0"
+          overlap_canonical: true
+          overlap_note: "Canonical form of source field IcAlps_Cost"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#icalps_cost"
+
+        icalps_oppo_closed:
+          internal_name: "icalps_oppo_closed"
+          type: date
+          fill_rate: "N/A"
+          required: true
+          format: "YYYY-MM-DD"
+          overlap_canonical: true
+          overlap_note: "Canonical form of source field oppo_closed"
+          constraint: "Actual closure date; populate when icalps_dealstatus is Won or any Closed variant"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#oppo_closed"
+
+        # Post-association — exception
+        icalps_primarydealcompany:
+          internal_name: "icalps_primarydealcompany"
+          type: number
+          fill_rate: "37.38%"
+          required: false
+          required_exception: "POST_ASSOCIATION"
+          note: "HubSpot internal company record ID; populated post-association bridge; not present at initial import"
+
+        icalps_primarydealcontact:
+          internal_name: "icalps_primarydealcontact"
+          type: number
+          fill_rate: "28.92%"
+          required: false
+          required_exception: "POST_ASSOCIATION"
+          note: "HubSpot internal contact record ID; populated post-association bridge"
+
+        icalps_opendate2:
+          internal_name: "icalps_opendate2"
+          type: date
+          fill_rate: "21.46%"
+          required: false
+          required_exception: "OPTIONAL_CONTEXT"
+          format: "YYYY-MM-DD"
+          note: "Secondary open date for re-opened deals; must be >= icalps_opendate"
+
+        icalps_closedate:
+          internal_name: "icalps_closedate"
+          type: date
+          fill_rate: "14.40%"
+          required: false
+          required_exception: "OPTIONAL_CONTEXT"
+          format: "YYYY-MM-DD"
+          constraint: "Warn if icalps_dealstatus is Won/Closed Won and this is empty"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#oppo_closed"
+
+        # Audit trail
+        icalps_original_status:
+          internal_name: "icalps_original_status"
+          type: enumeration
+          fill_rate: "2.39%"
+          required: true
+          allowed_values: ["Abandonne (Abandonnee)", "Won (Gagnee)", "In Progress (En cours)", Lost, NoGo]
+          note: "Legacy original status; used for migration audit trail"
+
+        icalps_originalstage:
+          internal_name: "icalps_originalstage"
+          type: enumeration
+          fill_rate: "2.33%"
+          required: true
+          allowed_values: [Identified, Negotiate, Qualified, "Design in", Identification, "Construction offre", "Evaluation technique"]
+          note: "Legacy stage label; do not use for live pipeline logic"
+
+        icalps_transformation_notes:
+          internal_name: "icalps_transformation_notes"
+          type: string
+          fill_rate: "2.33%"
+          required: true
+          constraint: "Migration notes; max 2000 chars"
+
+        icalps_dealsource:
+          internal_name: "icalps_dealsource"
+          type: string
+          fill_rate: "0.58%"
+          fill_note: "Very low fill — data quality gap"
+          required: true
+
+        icalps_pipeline_stage_key:
+          internal_name: "icalps_pipeline_stage_key"
+          type: string
+          fill_rate: "0.58%"
+          required: true
+          note: "Internal pipeline stage key from source system routing"
+
+        # Deprecated aliases — blocked on write
+        icalps_netweighted_amount__k__:
+          internal_name: "icalps_netweighted_amount__k__"
+          type: number
+          fill_rate: "37.55%"
+          required: false
+          required_exception: "DEPRECATED"
+          deprecated: true
+          note: "Alias of icalps_net_weighted_amount; do not populate — use canonical"
+
+        icalps_netamount:
+          internal_name: "icalps_netamount"
+          type: string
+          fill_rate: "37.55%"
+          required: false
+          required_exception: "DEPRECATED"
+          deprecated: true
+          note: "String alias of icalps_netamount_k__; do not populate — use numeric canonical"
+
+      teams:
+        - name: "IcAlps"
+          views:
+            - name: "IcAlps Current Opportunities"
+              index_key: "icalps_deal_id"
+              display_properties:
+                - icalps_deal_id
+                - icalps_dealtype
+                - icalps_dealcategory
+                - icalps_stage
+                - icalps_dealstatus
+                - icalps_amount_k__
+                - icalps_netamount_k__
+                - icalps_net_weighted_amount
+                - icalps_oppocertainty
+                - icalps_targetclose
+                - icalps_ownerid
+            - name: "IcAlps Deal Financial Summary"
+              index_key: "icalps_deal_id"
+              display_properties:
+                - icalps_deal_id
+                - icalps_dealforecast
+                - icalps_icalps_cost
+                - icalps_amount_k__
+                - icalps_netamount_k__
+                - icalps_net_weighted_amount
+                - icalps_oppocertainty
+            - name: "IcAlps Deal Minimal Import"
+              index_key: "icalps_deal_id"
+              display_properties:
+                - icalps_deal_id
+                - icalps_company_id
+                - icalps_contact_id
+                - icalps_dealstatus
+                - icalps_stage
+                - icalps_targetclose
+                - icalps_ownerid
+        - name: "SEALSQ"
+          views:
+            - name: "SEALSQ Deal Cross-Reference"
+              index_key: "icalps_deal_id"
+              display_properties:
+                - icalps_deal_id
+                - icalps_company_id
+                - icalps_dealstatus
+                - icalps_targetclose
+
+    # =========================================================================
+    Communication:
+      description: "Logged interactions (calls, notes, meetings, tasks) — mapped to HubSpot Engagements"
+      source_object: "engagements"
+      primary_key: "icalps_comm_id"
+
+      engagement_config:
+        name: "engagements"
+        table_name: "engagements"
+        legacy_id_field: "icalps_communication_id"
+        where_clause: "icalps_communication_id IS NOT NULL"
+        order_by: "hs_timestamp DESC"
+        idempotency_guard: "NOT EXISTS (unique_id = 'icalps_' + communication_id)"
+        upsert_strategy: "UPSERT on icalps_communication_id match"
+        hubspot_properties:
+          core:
+            - hs_object_id
+            - hs_engagement_type
+            - hs_timestamp
+          content:
+            - hs_engagement_subject
+            - hs_note_body
+            - hs_engagement_status
+          type_specific:
+            - hs_call_direction
+            - hs_call_duration
+            - hs_meeting_title
+            - hs_email_subject
+          associations:
+            - associated_company_id
+            - associated_contact_id
+            - associated_deal_id
+          legacy:
+            - icalps_communication_id
+          metadata:
+            - createdate
+            - hs_lastmodifieddate
+        type_mapping:
+          CALL:    "hs_engagement_type = CALL"
+          NOTE:    "hs_engagement_type = NOTE"
+          MEETING: "hs_engagement_type = MEETING_EVENT"
+          TASK:    "hs_engagement_type = TASK"
+
+      properties:
+
+        icalps_comm_id:
+          internal_name: "icalps_comm_id"
+          type: string
+          fill_rate: "GENERATED"
+          required: true
+          unique: true
+          constraint: "Format: icalps_{source_communication_id}; idempotency guard on upsert"
+          generated: true
+          required_exception: null
+
+        icalps_communication_id:
+          internal_name: "icalps_communication_id"
+          type: string
+          fill_rate: "N/A — legacy source ID"
+          required: true
+          unique: true
+          constraint: "Legacy source system communication ID; must not be null; basis for icalps_comm_id generation"
+
+        subject:
+          internal_name: "hs_engagement_subject"
+          type: string
+          fill_rate: "N/A"
+          required: false
+          required_exception: "OPTIONAL_CONTEXT"
+          constraint: "Max 500 chars; HTML stripped on import"
+
+        communication_type:
+          internal_name: "hs_engagement_type"
+          type: enumeration
+          required: true
+          allowed_values: [CALL, NOTE, MEETING_EVENT, TASK]
+          constraint: "Maps directly to HubSpot engagement type enum"
+
+        hs_timestamp:
+          internal_name: "hs_timestamp"
+          type: datetime
+          required: true
+          format: "YYYY-MM-DDTHH:MM:SS"
+          constraint: "Valid ISO 8601; must not be in the future"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#comm_todatetime"
+
+        # Association linkage — all optional context but monitored
+        associated_company_id:
+          internal_name: "associated_company_id"
+          type: foreign_key
+          reference: "Company.icalps_company_id"
+          required: false
+          required_exception: "OPTIONAL_CONTEXT"
+          constraint: "If populated, must resolve to existing Company.icalps_company_id — WARN on miss"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#comm_linkage"
+
+        associated_contact_id:
+          internal_name: "associated_contact_id"
+          type: foreign_key
+          reference: "Contact.icalps_contact_id"
+          required: false
+          required_exception: "OPTIONAL_CONTEXT"
+          constraint: "If populated, must resolve to existing Contact.icalps_contact_id — WARN on miss"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#comm_linkage"
+
+        associated_deal_id:
+          internal_name: "associated_deal_id"
+          type: foreign_key
+          reference: "Deal.icalps_deal_id"
+          required: false
+          required_exception: "OPTIONAL_CONTEXT"
+          constraint: "If populated, must resolve to existing Deal.icalps_deal_id — WARN on miss"
+          watchlist: true
+          watchlist_ref: "See flags/icalps_import_flags.md#comm_linkage"
+
+      teams:
+        - name: "IcAlps"
+          views:
+            - name: "IcAlps Activity Log"
+              index_key: "icalps_comm_id"
+              display_properties:
+                - icalps_comm_id
+                - communication_type
+                - subject
+                - hs_timestamp
+                - associated_contact_id
+                - associated_deal_id
+            - name: "IcAlps Meeting Log"
+              index_key: "icalps_comm_id"
+              filter: "communication_type = MEETING_EVENT"
+              display_properties:
+                - icalps_comm_id
+                - subject
+                - hs_timestamp
+                - associated_contact_id
+                - associated_company_id
+
+  # ---------------------------------------------------------------------------
+  # Cross-entity FK integrity
+  # ---------------------------------------------------------------------------
+  foreign_key_integrity:
+    - from: "Contact.icalps_company_id"
+      to: "Company.icalps_company_id"
+      on_violation: "REJECT"
+    - from: "Deal.icalps_company_id"
+      to: "Company.icalps_company_id"
+      on_violation: "REJECT"
+    - from: "Deal.icalps_contact_id"
+      to: "Contact.icalps_contact_id"
+      on_violation: "WARN"
+    - from: "Communication.associated_deal_id"
+      to: "Deal.icalps_deal_id"
+      on_violation: "WARN"
+    - from: "Communication.associated_contact_id"
+      to: "Contact.icalps_contact_id"
+      on_violation: "WARN"
+    - from: "Communication.associated_company_id"
+      to: "Company.icalps_company_id"
+      on_violation: "WARN"
+
+  # ---------------------------------------------------------------------------
+  # Import sequencing
+  # ---------------------------------------------------------------------------
+  import_order:
+    - step: 1
+      entity: Company
+      reason: "No FK dependencies; must exist before Contact and Deal"
+    - step: 2
+      entity: Contact
+      reason: "Depends on Company.icalps_company_id"
+    - step: 3
+      entity: Deal
+      reason: "Depends on Company and Contact"
+    - step: 4
+      entity: Communication
+      reason: "Depends on Deal, Contact, Company; engagement upsert runs last"
+
+  # ---------------------------------------------------------------------------
+  # Global import rules
+  # ---------------------------------------------------------------------------
+  import_rules:
+    deduplication:
+      Company:       "icalps_company_id"
+      Contact:       "icalps_contact_id"
+      Deal:          "icalps_deal_id"
+      Communication: "icalps_communication_id"
+    on_duplicate: "UPSERT"
+    null_handling: "Empty string treated as NULL for required field validation"
+    encoding: "UTF-8"
+    date_formats_accepted: ["YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY"]
+    normalisation:
+      - field: "icalps_address_country"
+        rule: "UK → GB"
+      - field: "icalps_dealstatus"
+        rule: "Apply hubspot_stage_mapping before writing HubSpot dealstage"
+      - field: "icalps_dealcertainty"
+        rule: "Coerce string to numeric; strip % if present"
+      - field: "icalps_ownerid"
+        rule: "Resolve aliases: deal_owner / company_owner / contact_owner / comp_primaryuserid → icalps_ownerid"
