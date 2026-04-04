@@ -41,6 +41,7 @@ company_hierarchy:
 dedupe_guardrail:
   non_negotiable: true
   rule: "Run a staging-vs-reference duplicate guard before Gold upserts and mirrored association writes."
+  current_state: "preserved for probe/calibration only until the matching contract is fully entity-config-driven"
   block_on_review_in_live_mode: true
   notes:
     - "Association table idempotency does not protect against linking the wrong live entity."

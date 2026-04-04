@@ -22,7 +22,7 @@ This repo covers:
 - PostgreSQL Bronze load/watermark orchestration
 - Silver gate orchestration
 - dbt as an external boundary
-- dedupe guardrail before any live promotion
+- probe-only dedupe guardrail preserved for later calibration
 - explicit Gold validation gate before any live `hubspot.*` write
 - Gold upsert and communication engagement SQL rendering
 - optional post-Gold sync/association path kept behind explicit opt-in
@@ -46,7 +46,9 @@ The orchestration probe proves stage sequencing and boundary clarity without
 requiring live production writes.
 
 The default runner now requires explicit approval before `GOLD_UPSERT`, and it
-stops at `GOLD_UPSERT` once approved. Post-Gold StackSync sync and
+stops at `GOLD_UPSERT` once approved. The dedupe guardrail is preserved as a
+probe-only capability for calibration work and does not currently participate in
+live execution. Post-Gold StackSync sync and
 mirrored association repair remain preserved in the repo, but they are not part
 of the default executable path unless explicitly enabled.
 

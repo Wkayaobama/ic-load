@@ -87,6 +87,7 @@ def run(
     probe_mode: bool = False,
     enable_post_gold: bool = False,
     approve_gold: bool = False,
+    enable_dedupe_guard: bool = False,
     hooks: PipelineHooks | None = None,
     bronze_csv_override: str | None = None,
 ) -> PipelineContext:
@@ -99,6 +100,7 @@ def run(
     ctx.metadata["probe_mode"] = probe_mode
     ctx.metadata["enable_post_gold"] = enable_post_gold
     ctx.metadata["approve_gold"] = approve_gold
+    ctx.metadata["enable_dedupe_guard"] = enable_dedupe_guard
     ctx.metadata["entity_resolution_map"] = load_entity_resolution_map()
     ctx.metadata["business_rules"] = load_business_rules()
 
@@ -136,7 +138,7 @@ def run(
     # Gold is the default final boundary for the clean runner. StackSync sync and
     # mirrored associations stay available behind an explicit opt-in.
     _run_dbt(ctx, entity, dry_run, hooks)
-    _run_dedupe_guard(ctx, entity, dry_run, probe_mode, hooks)
+    _run_dedupe_guard(ctx, entity, dry_run, probe_mode, enable_dedupe_guard, hooks)
     _run_gold_validate(ctx, entity, dry_run, probe_mode, approve_gold)
     _run_gold_upsert(ctx, entity, dry_run, hooks)
 
@@ -294,9 +296,18 @@ def _run_dedupe_guard(
     entity: str,
     dry_run: bool,
     probe_mode: bool,
+    enable_dedupe_guard: bool,
     hooks: PipelineHooks,
 ) -> None:
     if not _should_run(ctx, PipelineStage.DEDUPE_GUARD, None):
+        return
+
+    if not enable_dedupe_guard:
+        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="not_enabled")
+        return
+
+    if not (dry_run or probe_mode):
+        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="probe_only_guardrail")
         return
 
     result = hooks.dedupe_guarder(entity, dry_run)
@@ -466,6 +477,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--probe-mode", action="store_true")
     parser.add_argument("--enable-post-gold", action="store_true")
     parser.add_argument("--approve-gold", action="store_true")
+    parser.add_argument("--enable-dedupe-guard", action="store_true")
     parser.add_argument("--bronze-csv-override")
     return parser.parse_args()
 
@@ -485,5 +497,6 @@ if __name__ == "__main__":
         probe_mode=args.probe_mode,
         enable_post_gold=args.enable_post_gold,
         approve_gold=args.approve_gold,
+        enable_dedupe_guard=args.enable_dedupe_guard,
         bronze_csv_override=args.bronze_csv_override,
     )

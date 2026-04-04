@@ -25,13 +25,13 @@ The core production path is:
 3. Silver normalization cleans and deduplicates
 4. Silver validation is the blocking gate
 5. dbt transforms `staging -> intermediate -> marts`
-6. dedupe guard blocks risky records before live promotion
-7. explicit Gold validation is required before any live `hubspot.*` write
-8. SQL upserts write to `hubspot.*`
+6. explicit Gold validation is required before any live `hubspot.*` write
+7. SQL upserts write to `hubspot.*`
 
 Important:
 - the clean runner stops at Gold by default
 - Gold itself is not implicit; it needs explicit validation/approval
+- the dedupe guardrail is preserved for probe/calibration only and is not production-active
 - downstream sync and mirrored association logic stay preserved, but only behind explicit opt-in later
 - no post-Gold path should run implicitly
 
@@ -145,7 +145,6 @@ The must-have runtime core is:
 - Bronze loader + watermarking
 - Silver normalization + validation
 - dbt boundary
-- dedupe guardrail
 - explicit Gold validation gate
 - Gold upsert patterns
 - schema/run context
@@ -171,7 +170,7 @@ The must-have runtime core is:
 - implemented `context/` runtime loaders and DB contract
 - implemented `pipeline/state.py` with explicit `GOLD_UPSERT` and `STACKSYNC_SYNC` stages
 - implemented thin Gold, sync, and association executors
-- made `DEDUPE_GUARD` the final pre-Gold safety stage
+- preserved `DEDUPE_GUARD` as a probe-only calibration stage
 - made `GOLD_VALIDATE` the explicit live-write approval stage
 - made `GOLD_UPSERT` the default terminal stage in the clean runner
 - implemented deterministic SQL rendering in `sql/`

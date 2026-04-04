@@ -30,6 +30,7 @@ Use this skill to recover a working pipeline without pretending the clean repo i
 6. Add a dedupe guardrail before Gold or association execution.
    Do not rely on `NOT EXISTS` alone.
    Prevent duplicate business objects before they can be linked through mirrored association tables.
+   If the guardrail is not yet entity-config-wide and calibrated, keep it probe-only instead of forcing it into live execution.
 
 7. Default the clean runner to stop at Gold.
    Require explicit approval before any live Gold write, and keep any StackSync sync or mirrored association logic explicit and opt-in until it is ready for live use.

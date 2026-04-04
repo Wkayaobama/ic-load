@@ -34,6 +34,7 @@ def test_warning_only_probe_reaches_dbt_and_stops_at_gold():
             entity="company",
             dry_run=False,
             probe_mode=True,
+            enable_dedupe_guard=True,
             hooks=hooks,
             bronze_csv_override="probe.csv",
         )
@@ -119,6 +120,9 @@ def test_communication_probe_stops_at_gold_by_default():
     assert "STACKSYNC_SYNC" not in stages
     assert "ASSOC_VALIDATE" not in stages
     assert "GOLD_UPSERT" in stages
+    dedupe_record = next(entry for entry in ctx.history if entry["to"] == "DEDUPE_GUARD")
+    assert dedupe_record["status"] == "SKIPPED"
+    assert dedupe_record["details"]["reason"] == "not_enabled"
 
 
 def test_probe_warning_only_dedupe_still_allows_gold_stage():
@@ -129,6 +133,7 @@ def test_probe_warning_only_dedupe_still_allows_gold_stage():
         ctx = run(
             entity="contact",
             probe_mode=True,
+            enable_dedupe_guard=True,
             hooks=hooks,
             bronze_csv_override="probe.csv",
         )
@@ -166,6 +171,7 @@ def test_dedupe_block_prevents_gold_stage():
             run(
                 entity="company",
                 probe_mode=True,
+                enable_dedupe_guard=True,
                 hooks=hooks,
                 bronze_csv_override="probe.csv",
             )
@@ -202,6 +208,28 @@ def test_live_mode_gold_can_run_after_explicit_validation():
     assert gold_validate_record["status"] == "SUCCESS"
     assert gold_validate_record["details"]["reason"] == "explicit_gold_validation_received"
     assert "GOLD_UPSERT" in [entry["to"] for entry in ctx.history]
+    dedupe_record = next(entry for entry in ctx.history if entry["to"] == "DEDUPE_GUARD")
+    assert dedupe_record["status"] == "SKIPPED"
+    assert dedupe_record["details"]["reason"] == "not_enabled"
+
+
+def test_live_mode_dedupe_guard_stays_probe_only():
+    tmp_path = Path.cwd() / "artifacts" / "test_probe_dedupe_probe_only"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    hooks = make_probe_hooks()
+    with patch("pipeline.state.ARTIFACTS_DIR", tmp_path):
+        ctx = run(
+            entity="company",
+            probe_mode=False,
+            approve_gold=True,
+            enable_dedupe_guard=True,
+            hooks=hooks,
+            bronze_csv_override="probe.csv",
+        )
+
+    dedupe_record = next(entry for entry in ctx.history if entry["to"] == "DEDUPE_GUARD")
+    assert dedupe_record["status"] == "SKIPPED"
+    assert dedupe_record["details"]["reason"] == "probe_only_guardrail"
 
 
 def test_enable_post_gold_allows_sync_and_associations():
@@ -213,6 +241,7 @@ def test_enable_post_gold_allows_sync_and_associations():
             entity="company",
             probe_mode=True,
             enable_post_gold=True,
+            enable_dedupe_guard=True,
             hooks=hooks,
             bronze_csv_override="probe.csv",
         )
