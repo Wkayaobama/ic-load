@@ -22,6 +22,22 @@ text_normalization:
     - "Strip unsafe control characters while preserving meaningful note/description line breaks."
     - "Apply the same cleaner to long-form text and identity text fields before staging normalization."
 
+company_hierarchy:
+  non_negotiable: true
+  authorities:
+    - "../../ic_load_pipeline/python-ignorethis/custom_objects/create_company_hierarchy.py"
+    - "../../ic_load_pipeline/python-ignorethis/custom_objects/upsert_sibling_companies.py"
+    - "../../custom_objects/SIBLING_COMPANY_PIPELINE.md"
+  rule: "Parent-child company hierarchy, sibling inference, and root-name grouping belong to one transformation package and must not be separated during salvage."
+  hierarchy_order:
+    - "Determine canonical parent company first."
+    - "Infer child/sibling records relative to that parent."
+    - "Use domain and common-root similarity signals to flag likely sibling groups."
+    - "Carry those flags forward into downstream association planning."
+  notes:
+    - "Levenshtein-style or common-root similarity is not a cosmetic dedupe helper; it refines sibling inference after parent selection."
+    - "Company hierarchy logic should be packaged either as its own deployable folder or as a dedicated runner adjunct with high-fidelity context."
+
 deal_stage_mapper:
   non_negotiable: true
   authority: "../../ic_load_pipeline/python-ignorethis/deal_stage_mapper.py"

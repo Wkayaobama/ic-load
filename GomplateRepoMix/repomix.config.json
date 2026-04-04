@@ -25,6 +25,7 @@
     "staging_metadata_snapshot.json",
     "../pipeline/text_normalization.py",
     "../../unflatten_hierarchy.py",
+    "../../ic_load_pipeline/python-ignorethis/custom_objects/create_company_hierarchy.py",
     "../../ic_load_pipeline/python-ignorethis/custom_objects/upsert_sibling_companies.py",
     "../../custom_objects/SIBLING_COMPANY_PIPELINE.md",
     "../../ic_load_pipeline/python-ignorethis/deal_stage_mapper.py",

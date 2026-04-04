@@ -6,7 +6,7 @@ This document widens the Repomix bundle just enough to preserve three critical
 forms of context that are easy to lose in cleanup:
 
 - communication hierarchy unflattening
-- sibling-company parent/sibling disambiguation
+- company hierarchy: parent-child definition, sibling inference, and common-root grouping
 - deal stage mapping business rules
 - legacy-to-Silver-to-HubSpot translation exemplars
 - universal UTF-8/mojibake cleanup rules
@@ -20,6 +20,7 @@ staging tables are shaped before or alongside the canonical SQL patterns.
 These source artifacts must be part of the Repomix bundle during salvage:
 
 - `../../unflatten_hierarchy.py`
+- `../../ic_load_pipeline/python-ignorethis/custom_objects/create_company_hierarchy.py`
 - `../../ic_load_pipeline/python-ignorethis/custom_objects/upsert_sibling_companies.py`
 - `../../custom_objects/SIBLING_COMPANY_PIPELINE.md`
 - `../../ic_load_pipeline/python-ignorethis/deal_stage_mapper.py`
@@ -151,12 +152,26 @@ For the salvage bundle:
 - keep `DEAL_STAGE_MAPPING_VISUAL.md` as explanatory context
 - carry the constraint into runner metadata through `business_rules.yaml`
 
-## Sibling Company Algorithm
+## Company Hierarchy Algorithm
 
 ### What it does
 
-`upsert_sibling_companies.py` detects plural-domain company groups in
-`staging.stg_company_normalised` and chooses exactly one canonical parent
+The company hierarchy logic is not just a sibling upsert helper. It is a linked
+transformation package spanning:
+
+- canonical parent selection
+- child/sibling inference
+- grouping by domain and common root
+- downstream association planning
+
+The key legacy sources are:
+
+- `create_company_hierarchy.py`
+- `upsert_sibling_companies.py`
+- `SIBLING_COMPANY_PIPELINE.md`
+
+At minimum, `upsert_sibling_companies.py` detects plural-domain company groups
+in `staging.stg_company_normalised` and chooses exactly one canonical parent
 record per domain group.
 
 Detection rule:
@@ -172,15 +187,18 @@ Parent rule:
 
 ### Why it matters
 
-Even if we keep custom-object or native-company variants separate in the clean
-repo, this rule is non-negotiable business logic:
+This logic cannot be split into unrelated cleanup buckets. In practice:
 
 - plural-domain groups are not random duplicates
 - parent selection is deterministic
+- child/sibling inference depends on that parent choice
+- common-root or Levenshtein-style similarity helps refine which records belong
+  under the same parent after hierarchy assignment
 - unresolved groups are excluded rather than partially mutated
 
-That logic must survive cleanup as context even before we decide which runtime
-surface owns it in `ic-load`.
+That means parent-child hierarchy and sibling grouping must survive cleanup as a
+single high-fidelity context package, even before we decide whether the clean
+repo exposes it as a dedicated folder or a runner adjunct.
 
 ## Translation Boundary
 

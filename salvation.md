@@ -4,6 +4,9 @@ This is the quick re-entry file for the `ic-load` repacking effort.
 
 If the context window is tight, start here first.
 
+Reusable skill:
+- [skills/pipeline-salvation/SKILL.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/skills/pipeline-salvation/SKILL.md)
+
 ## Repo Identity
 
 - Repo name: `ic-load`
@@ -50,7 +53,7 @@ Do not use Gomplate for:
 Use Repomix to preserve the **contextual engineering bundle** for later phases.
 
 The bundle must stay narrow and schema-governed, with one explicit exception:
-- non-negotiable algorithm context for communication unflattening and sibling-company logic
+- non-negotiable algorithm context for communication unflattening and full company-hierarchy logic
 
 Include:
 - rendered SQL
@@ -62,6 +65,7 @@ Include:
 - text normalization rules
 - raw-to-staging transformation primitive
 - `unflatten_hierarchy.py`
+- `create_company_hierarchy.py`
 - `upsert_sibling_companies.py`
 - `SIBLING_COMPANY_PIPELINE.md`
 
@@ -81,6 +85,8 @@ The following rules are now treated as universal salvage constraints:
 - date serialization must be deterministic before a record is considered staging-ready
 - business object metadata must stay distinct from StackSync resolution metadata
 - no write to `hubspot.*` happens without explicit confirmation
+- company hierarchy must be treated as one package:
+  parent-child definition first, then sibling/common-root grouping
 
 The reusable implementation lives in:
 
@@ -197,5 +203,9 @@ Priority order:
 When resuming work, say:
 
 `Open salvation.md and continue with the next approved iteration for ic-load.`
+
+Or, when the reusable method matters more than this specific repo state, say:
+
+`Use $pipeline-salvation and reopen salvation.md for ic-load.`
 
 That should be enough to recover the right project, the right boundary, and the right process quickly.

@@ -83,7 +83,7 @@ Repomix must include:
 - text normalization rules
 - raw-to-staging transformation primitive
 - communication unflattening context
-- sibling-company algorithm context
+- full company hierarchy context, including parent-child selection and sibling inference
 
 Repomix must exclude:
 - Bronze payload archives
