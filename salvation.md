@@ -125,10 +125,11 @@ Do not reintroduce collaborator-specific absolute path assumptions into the runt
 Read these in order:
 
 1. [docs/CANONICAL_EXECUTION_SPEC.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/CANONICAL_EXECUTION_SPEC.md)
-2. [docs/FUNCTIONALITY_COVERAGE_MATRIX.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/FUNCTIONALITY_COVERAGE_MATRIX.md)
-3. [docs/CONTEXT_PACKAGING_PROCESS.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/CONTEXT_PACKAGING_PROCESS.md)
-4. [docs/TARGET_REPO_ARCHITECTURE.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/TARGET_REPO_ARCHITECTURE.md)
-5. [docs/LEGACY_IMPORT_MAP.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/LEGACY_IMPORT_MAP.md)
+2. [docs/ASSOCIATION_PROBE_TECHNICAL_STATE.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/ASSOCIATION_PROBE_TECHNICAL_STATE.md)
+3. [docs/FUNCTIONALITY_COVERAGE_MATRIX.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/FUNCTIONALITY_COVERAGE_MATRIX.md)
+4. [docs/CONTEXT_PACKAGING_PROCESS.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/CONTEXT_PACKAGING_PROCESS.md)
+5. [docs/TARGET_REPO_ARCHITECTURE.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/TARGET_REPO_ARCHITECTURE.md)
+6. [docs/LEGACY_IMPORT_MAP.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/LEGACY_IMPORT_MAP.md)
 
 ## Commit Anchors
 
