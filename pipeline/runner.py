@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from context.config import DBT_PROJECT_DIR, ENTITIES, dbt_command, latest_bronze_path
+from context.config import DBT_PROJECT_DIR, ENTITIES, dbt_command, latest_bronze_path, load_business_rules, load_entity_resolution_map
 from pipeline.state import (
     PipelineContext,
     PipelineStage,
@@ -84,6 +84,8 @@ def run(
     owner_blocking = thresholds.get("owner_resolution_blocking", False)
     ctx.metadata["thresholds"] = thresholds
     ctx.metadata["probe_mode"] = probe_mode
+    ctx.metadata["entity_resolution_map"] = load_entity_resolution_map()
+    ctx.metadata["business_rules"] = load_business_rules()
 
     resume_stage: PipelineStage | None = None
     if resume_from:

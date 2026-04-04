@@ -90,10 +90,15 @@ Its job is to package only the schema-governed artifacts required to regenerate 
 
 This is intentionally narrow. It prevents the next implementation phase from being contaminated by legacy execution logs, historical notebooks, or ad hoc extraction material.
 
+Exception:
+- include the minimum non-SQL algorithm context needed to recover communication hierarchy logic and sibling-company parent selection
+- do not broaden that exception into a general permission to bundle arbitrary legacy Python
+
 ### File Selection Rule
 
 Repomix bundle selection is critical:
 - include only schema-governed files and rendered SQL outputs
+- include the specific ad hoc algorithm sources that explain communication unflattening and sibling-company disambiguation
 - exclude Bronze extracts, benchmark dumps, legacy memory files, and large artifacts
 - exclude anything that would bias later generation toward instance-specific noise instead of the canonical contract
 
@@ -150,6 +155,7 @@ Those can remain external references during salvage, but they should not be pack
 3. Silver orphan gate
    Rule:
    - communication without company and without person is dropped from the CRM path
+   - ad hoc hierarchy reconstruction remains available through `unflatten_hierarchy.py` and must stay in the Repomix context bundle
 
 4. dbt pipeline
    Canonical lineage:
@@ -193,7 +199,7 @@ Those can remain external references during salvage, but they should not be pack
 
 - Company: `stacksync_record_id_9vpp8v`
 - Contact: `stacksync_record_id_nd85zc`
-- Deal: `stacksync_record_id`
+- Deal: `stacksync_record_id_87b7vd`
 
 ### StackSync Sync Invariant
 
@@ -253,3 +259,7 @@ That means `ic-load` must converge on:
 - one environment contract
 - one operator runbook
 - one minimal test/smoke path
+
+Current smoke-path rule:
+- clean-repo smoke tests may query `information_schema` and `staging.*`
+- clean-repo smoke tests must not read or write `hubspot.*` until the runtime passes a higher-confidence threshold

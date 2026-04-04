@@ -49,7 +49,8 @@ Do not use Gomplate for:
 
 Use Repomix to preserve the **contextual engineering bundle** for later phases.
 
-The bundle must stay narrow and schema-governed.
+The bundle must stay narrow and schema-governed, with one explicit exception:
+- non-negotiable algorithm context for communication unflattening and sibling-company logic
 
 Include:
 - rendered SQL
@@ -57,6 +58,12 @@ Include:
 - run context
 - validation rules
 - FK cascade graph
+- staging-only metadata snapshot
+- text normalization rules
+- raw-to-staging transformation primitive
+- `unflatten_hierarchy.py`
+- `upsert_sibling_companies.py`
+- `SIBLING_COMPANY_PIPELINE.md`
 
 Exclude:
 - Bronze payloads
@@ -64,6 +71,22 @@ Exclude:
 - raw `memory/`
 - artifacts and logs
 - historical noise
+- anything that reads or exports `hubspot.*` data into the bundle
+
+## Shared Cross-Entity Rules
+
+The following rules are now treated as universal salvage constraints:
+
+- UTF-8/mojibake cleaning applies across all entities, not only Silver or Opportunity
+- date serialization must be deterministic before a record is considered staging-ready
+- business object metadata must stay distinct from StackSync resolution metadata
+- no write to `hubspot.*` happens without explicit confirmation
+
+The reusable implementation lives in:
+
+- [pipeline/text_normalization.py](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/text_normalization.py)
+- [pipeline/raw_to_staging_snippet.py](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/raw_to_staging_snippet.py)
+- [docs/RAW_CSV_TO_STAGING_SNIPPET.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/RAW_CSV_TO_STAGING_SNIPPET.md)
 
 ## What Must Stay Out Of Codespaces
 
@@ -80,10 +103,14 @@ Those may remain in the legacy workspace for reference, but not in the clean run
 
 Assume the clean repo can be opened from:
 - Codespaces: `/workspaces/icalps`
-- WSL / remote Linux: `/home/<user>/.../ic-load`
 - Windows local checkout: `C:\...\IC_Load\ic-load`
+- WSL / remote Linux: `/home/<user>/.../ic-load`
 
-Prefer Linux-side paths in WSL for real development work.
+WSL is optional and should only be used when it streamlines development for a
+Windows collaborator. It must not introduce path assumptions that break the
+standard Windows checkout.
+
+If WSL is used, prefer Linux-side paths for development work.
 Do not reintroduce collaborator-specific absolute path assumptions into the runtime.
 
 ## Current Baseline Docs
@@ -118,6 +145,7 @@ The must-have runtime core is:
 - schema/run context
 - Gomplate/Repomix workflow
 - Codespaces/devcontainer bootstrap
+- live Postgres smoke testing for staging-only reverse lookup readiness and sibling candidate pressure
 
 ## Current Iteration Status
 
@@ -145,6 +173,13 @@ The must-have runtime core is:
 - added `pipeline/bronze.py` so the clean runner owns Bronze loading locally
 - removed the devcontainer env-file dependency for Codespaces startup
 - added `scripts/codespace-smoke.sh` for a remote-safe smoke path
+- corrected the live deal StackSync column to `stacksync_record_id_87b7vd`
+- added `pipeline.live_smoke` for staging-only Postgres contract probing
+- added ad hoc transform context and staging metadata snapshot for Repomix
+- promoted UTF-8/mojibake cleaning into a universal packaged rule
+- added the reusable raw-CSV-to-staging transformation snippet
+- confirmed the clean repo already exposes CLI-style orchestration via `runner`, `probe`, `live_smoke`, and the raw-to-staging snippet
+- kept all new validation and assessment work on the safe side of `hubspot.*`
 
 ### Next Approved Iteration
 

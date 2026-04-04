@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from context.config import load_schema_context
 from sql.render import (
     render_association_bridge,
     render_engagement_upsert,
@@ -37,6 +38,13 @@ def test_rendered_sql_is_stable_for_same_inputs():
     first = render_association_bridge("Notes", "deal")
     second = render_association_bridge("Notes", "deal")
     assert first == second
+
+
+def test_deal_association_render_uses_live_stacksync_column():
+    schema = load_schema_context()
+    assert schema["stacksync"]["deal_record_id_column"] == "stacksync_record_id_87b7vd"
+    sql_text = render_association_bridge("Notes", "deal")
+    assert "stacksync_record_id_87b7vd" in sql_text
 
 
 def test_write_all_rendered_sql_outputs_expected_files():

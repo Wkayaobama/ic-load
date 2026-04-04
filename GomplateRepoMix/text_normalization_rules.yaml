@@ -1,0 +1,55 @@
+scope: "universal_across_entities"
+non_negotiable: true
+
+applies_to:
+  - company
+  - contact
+  - opportunity
+  - communication
+  - case
+
+read_contract:
+  csv_encoding: "utf-8-sig"
+  note: "Bronze and benchmark CSV inputs must be read with BOM-safe UTF-8 handling."
+
+text_cleaning:
+  preserve_semantic_newlines: true
+  strip_control_chars: true
+  collapse_horizontal_whitespace: true
+  trim_outer_whitespace: true
+  repair_common_mojibake: true
+  common_patterns:
+    - "\"\\u00c3\\u00a9\" -> \"\\u00e9\""
+    - "\"\\u00c3\\u00a8\" -> \"\\u00e8\""
+    - "\"\\u00c3\\u00aa\" -> \"\\u00ea\""
+    - "\"\\u00c3\\u00a7\" -> \"\\u00e7\""
+    - "\"\\u00e2\\u20ac\\u2122\" -> \"'\""
+    - "\"\\u00e2\\u20ac\\u0153\" -> '\"'"
+    - "\"\\u00e2\\u20ac\\u009d\" -> '\"'"
+    - "\"\\u00c3\\u00af\\u00c2\\u00bf\\u00c2\\u00bd\" -> removed"
+    - "\"\\u00c2\" -> removed when orphaned encoding artifact"
+
+field_policy:
+  long_form_text:
+    - "description"
+    - "problem_note"
+    - "solution_note"
+    - "subject"
+    - "note_body"
+  identity_text:
+    - "company_name"
+    - "person_firstname"
+    - "person_lastname"
+    - "person_email"
+  rule: "Apply the same UTF-8/mojibake cleaning policy before entity-specific mapping."
+
+staging_rule:
+  keep_resolution_fields_separate: true
+  note: "StackSync IDs are never text-cleaning targets for business payload semantics."
+
+repomix_rule:
+  include_clean_contract: true
+  include_runtime_reference: "../pipeline/text_normalization.py"
+  include_legacy_precedent:
+    - "../../ic_load_pipeline/python-ignorethis/process_silver_layer.py"
+    - "../../ic_load_pipeline/python-ignorethis/process_opportunities.py"

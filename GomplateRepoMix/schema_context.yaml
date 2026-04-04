@@ -101,7 +101,7 @@ stacksync:
   shared_instance: true
   company_record_id_column: "stacksync_record_id_9vpp8v"
   contact_record_id_column: "stacksync_record_id_nd85zc"
-  deal_record_id_column: "stacksync_record_id"
+  deal_record_id_column: "stacksync_record_id_87b7vd"
 
 association_type_ids:
   calls_company: 182

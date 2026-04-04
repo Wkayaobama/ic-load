@@ -18,7 +18,7 @@ FROM hubspot.notes AS comm
 INNER JOIN staging.fct_communication_notes AS fct
     ON comm.unique_id = 'icalps_' || fct.icalps_communication_id::text
 INNER JOIN hubspot.deals AS target
-    ON fct.associated_deal_id::text = target.stacksync_record_id::text
+    ON fct.associated_deal_id::text = target.stacksync_record_id_87b7vd::text
 WHERE comm.unique_id LIKE 'icalps_%'
   AND fct.associated_deal_id IS NOT NULL
   AND NOT EXISTS (

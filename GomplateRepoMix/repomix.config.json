@@ -3,7 +3,7 @@
   "output": {
     "filePath": "repomix_bundle/icalps_pipeline_context.xml",
     "style": "xml",
-    "headerText": "IC'ALPS pipeline schema bundle. Scope: rendered SQL upsert patterns, bidirectional StackSync sync contract, and association bridge patterns only. Snakemake, dbt model authoring, Python transforms, Bronze payloads, and memory/reference dumps are intentionally out of scope.",
+    "headerText": "IC'ALPS pipeline context bundle. Scope: rendered SQL patterns plus the minimum algorithm context required to recover communication hierarchy/unflattening, sibling-company disambiguation, and legacy-to-Silver-to-HubSpot property translation. Bronze payload archives, hubspot.* table exports, and memory/reference dumps remain out of scope.",
     "showLineNumbers": true,
     "removeComments": false,
     "removeEmptyLines": false
@@ -13,11 +13,31 @@
     "../sql/templates/*.tmpl",
     "../docs/CANONICAL_EXECUTION_SPEC.md",
     "../docs/CONTEXT_PACKAGING_PROCESS.md",
+    "../docs/AD_HOC_TRANSFORM_CONTEXT.md",
+    "../docs/LIVE_POSTGRES_SMOKE_TEST.md",
     "../ValidationRules/icalps_crm_schema.yaml",
     "../ValidationRules/icalps_import_flags.md",
     "fk_cascade_graph.mmd",
     "schema_context.yaml",
-    "run_context.yaml"
+    "run_context.yaml",
+    "business_rules.yaml",
+    "text_normalization_rules.yaml",
+    "staging_metadata_snapshot.json",
+    "../pipeline/text_normalization.py",
+    "../../unflatten_hierarchy.py",
+    "../../ic_load_pipeline/python-ignorethis/custom_objects/upsert_sibling_companies.py",
+    "../../custom_objects/SIBLING_COMPANY_PIPELINE.md",
+    "../../ic_load_pipeline/python-ignorethis/deal_stage_mapper.py",
+    "../../ic_load_pipeline/python-ignorethis/process_silver_layer.py",
+    "../../ic_load_pipeline/python-ignorethis/process_opportunities.py",
+    "../../DEAL_STAGE_MAPPING_VISUAL.md",
+    "../../ic_load_pipeline/dbt_communication/models/intermediate/int_communication_classified.sql",
+    "../../ic_load_pipeline/dbt_communication/models/intermediate/int_communication_reconciled.sql",
+    "../../ic_load_pipeline/dbt_communication/models/marts/fct_communication_calls.sql",
+    "../../benchmark/benchmark_hubspot-crm-exports-icalps-companies-2026-03-07.csv",
+    "../../benchmark/benchmark_hubspot-crm-exports-icalps_contact-2026-03-07.csv",
+    "../../benchmark/benchmark_hubspot-crm-exports-icalps_deals-2026-03-07.csv",
+    "../../benchmark/hubspot-crm-exports-all-tickets-2026-04-04-1.csv"
   ],
   "ignore": {
     "useGitignore": true,
@@ -30,8 +50,8 @@
       "bronze_layer/**",
       "gold_layer/**",
       "memory/**",
-      "benchmark/**",
-      "artifacts/**"
+      "artifacts/**",
+      "**/hubspot/**"
     ]
   }
 }

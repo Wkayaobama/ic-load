@@ -1,0 +1,161 @@
+{
+  "as_of": "2026-04-04",
+  "scope": "staging_only",
+  "source": "read-only PostgreSQL metadata and aggregate profiling",
+  "rule": "Never read from or write to hubspot.* during this smoke baseline.",
+  "staging_tables": {
+    "raw_stg_communication": {
+      "row_count": 77100,
+      "columns": [
+        "Comm_CommunicationId",
+        "Comm_OpportunityId",
+        "Comm_CaseId",
+        "Comm_Type",
+        "Comm_Action",
+        "Comm_Status",
+        "Comm_Priority",
+        "Comm_DateTime",
+        "Comm_ToDateTime",
+        "Comm_Note",
+        "Comm_Subject",
+        "Comm_Email",
+        "Comm_CreatedDate",
+        "Comm_UpdatedDate",
+        "Comm_OriginalDateTime",
+        "Comm_OriginalToDateTime",
+        "Person_Id",
+        "Person_FirstName",
+        "Person_LastName",
+        "Person_EmailAddress",
+        "Company_Id",
+        "Company_Name",
+        "Case_Description",
+        "Case_CompanyId",
+        "Case_PersonId"
+      ]
+    },
+    "stg_communication": {
+      "row_count": 29150,
+      "columns": [
+        "Comm_CommunicationId",
+        "Comm_OpportunityId",
+        "Comm_CaseId",
+        "Comm_Type",
+        "Comm_Action",
+        "Comm_Status",
+        "Comm_Priority",
+        "Comm_DateTime",
+        "Comm_ToDateTime",
+        "Comm_Note",
+        "Comm_Subject",
+        "Comm_Email",
+        "Comm_CreatedDate",
+        "Comm_UpdatedDate",
+        "Comm_OriginalDateTime",
+        "Comm_OriginalToDateTime",
+        "Person_Id",
+        "Person_FirstName",
+        "Person_LastName",
+        "Person_EmailAddress",
+        "Company_Id",
+        "Company_Name",
+        "Case_Description",
+        "Case_CompanyId",
+        "Case_PersonId",
+        "bronze_extracted_at",
+        "bronze_source",
+        "_bronze_loaded_at",
+        "_bronze_source_file",
+        "_load_status",
+        "_first_seen_at",
+        "_last_modified_at"
+      ]
+    },
+    "stg_communication_normalised": {
+      "row_count": 6127,
+      "columns": [
+        "comm_communicationid",
+        "comm_action",
+        "comm_type",
+        "comm_status",
+        "comm_priority",
+        "comm_channel",
+        "comm_subject",
+        "comm_note",
+        "comm_email",
+        "comm_datetime",
+        "comm_originaldatetime",
+        "comm_originaltodatetime",
+        "person_id",
+        "company_id",
+        "comm_opportunityid",
+        "comm_caseid",
+        "person_email",
+        "person_name",
+        "comp_companyid",
+        "comp_name",
+        "comp_website",
+        "_load_status",
+        "_first_seen_at",
+        "_last_modified_at"
+      ]
+    },
+    "fct_communication_calls": {
+      "row_count": 5959
+    },
+    "fct_communication_notes": {
+      "row_count": 11994
+    },
+    "fct_communication_tasks": {
+      "row_count": 145
+    },
+    "fct_communication_meetings": {
+      "row_count": 59043
+    },
+    "stg_company_normalised": {
+      "row_count": 2910
+    }
+  },
+  "staging_metrics": {
+    "plural_domain_groups": 151,
+    "plural_domain_rows": 499,
+    "communication_normalised_anchor_summary": {
+      "total_rows": 6127,
+      "rows_with_company": 2440,
+      "rows_with_person": 5532,
+      "rows_without_company_or_person": 0
+    },
+    "calls_reconciliation_summary": {
+      "total_rows": 5959,
+      "with_company_uuid": 5943,
+      "with_contact_uuid": 4756,
+      "with_deal_uuid": 91,
+      "reconciled_rows": 5943,
+      "unreconciled_rows": 16
+    },
+    "notes_reconciliation_summary": {
+      "total_rows": 11994,
+      "with_company_uuid": 1511,
+      "with_contact_uuid": 8510,
+      "with_deal_uuid": 246,
+      "reconciled_rows": 8794,
+      "unreconciled_rows": 3200
+    },
+    "tasks_reconciliation_summary": {
+      "total_rows": 145,
+      "with_company_uuid": 25,
+      "with_contact_uuid": 24,
+      "with_deal_uuid": 3,
+      "reconciled_rows": 25,
+      "unreconciled_rows": 120
+    },
+    "meetings_reconciliation_summary": {
+      "total_rows": 59043,
+      "with_company_uuid": 462,
+      "with_contact_uuid": 375,
+      "with_deal_uuid": 69,
+      "reconciled_rows": 462,
+      "unreconciled_rows": 58581
+    }
+  }
+}

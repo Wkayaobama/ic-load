@@ -1,0 +1,37 @@
+resolution_policy:
+  name: prefer_record_with_most_metadata
+  rationale: "Richer records usually indicate FK-resolved rows with more trustworthy downstream joins."
+  non_negotiable: true
+
+metadata_segmentation:
+  non_negotiable: true
+  rule: "Assessment outputs must keep legacy source fields, Silver canonical fields, Gold HubSpot-shaped fields, and StackSync resolution metadata in separate segments."
+  do_not_mix:
+    - "stacksync_record_id_* columns into Silver business payload"
+    - "stacksync_record_id_* columns into Gold property translation"
+  communication_note: "Communication requires an extra dbt classification/reconciliation boundary before HubSpot engagement payload shape exists."
+
+text_normalization:
+  non_negotiable: true
+  scope: "universal across company/contact/opportunity/communication/case"
+  contract: "GomplateRepoMix/text_normalization_rules.yaml"
+  rule: "UTF-8/mojibake cleanup is a shared preprocessing rule, not an entity-specific workaround."
+  requirements:
+    - "Read CSV inputs with utf-8-sig semantics."
+    - "Repair common mojibake patterns before mapping to HubSpot-shaped fields."
+    - "Strip unsafe control characters while preserving meaningful note/description line breaks."
+    - "Apply the same cleaner to long-form text and identity text fields before staging normalization."
+
+deal_stage_mapper:
+  non_negotiable: true
+  authority: "../../ic_load_pipeline/python-ignorethis/deal_stage_mapper.py"
+  legacy_reference: "../../DEAL_STAGE_MAPPING_VISUAL.md"
+  rule: "Deal stage mapping must resolve pipeline + stage + outcome to HubSpot-native pipeline/stage IDs."
+  normalization:
+    stage_names: true
+    outcome_names: true
+  supported_pipeline_ids:
+    hardware: 766126206
+  notes:
+    - "The mapper source is authoritative over older design notes if they conflict."
+    - "The runner and packaging context must preserve this rule as a business constraint, not a convenience helper."
