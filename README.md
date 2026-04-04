@@ -9,7 +9,7 @@ It is intentionally separate from `IC-D-LOAD`.
 
 - shared pipeline contract for the StackSync-backed load flow
 - fixed schema context and variable run context
-- thin runtime spine for Bronze -> Silver -> dbt -> Gold -> StackSync -> associations
+- thin runtime spine for Bronze -> Silver -> dbt -> dedupe -> Gold
 - SQL rendering for entity upserts, engagement upserts, and association bridge patterns
 - Repomix packaging for contract files plus non-negotiable algorithm context
 - devcontainer bootstrap for consistent collaborator setup
@@ -22,9 +22,10 @@ This repo covers:
 - PostgreSQL Bronze load/watermark orchestration
 - Silver gate orchestration
 - dbt as an external boundary
+- dedupe guardrail before any live promotion
+- explicit Gold validation gate before any live `hubspot.*` write
 - Gold upsert and communication engagement SQL rendering
-- explicit StackSync sync checkpoint
-- association bridge SQL
+- optional post-Gold sync/association path kept behind explicit opt-in
 - collaborator environment standardization
 
 This repo does not cover:
@@ -43,6 +44,11 @@ This repo does not cover:
 
 The orchestration probe proves stage sequencing and boundary clarity without
 requiring live production writes.
+
+The default runner now requires explicit approval before `GOLD_UPSERT`, and it
+stops at `GOLD_UPSERT` once approved. Post-Gold StackSync sync and
+mirrored association repair remain preserved in the repo, but they are not part
+of the default executable path unless explicitly enabled.
 
 The live smoke entrypoint is staging-only. It validates the shared PostgreSQL
 staging contract, communication reconciliation readiness, and plural-domain

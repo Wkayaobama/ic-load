@@ -18,6 +18,8 @@ class PipelineStage(Enum):
     SILVER_NORMALISE = auto()
     SILVER_VALIDATE = auto()
     DBT_BUILD = auto()
+    DEDUPE_GUARD = auto()
+    GOLD_VALIDATE = auto()
     GOLD_UPSERT = auto()
     STACKSYNC_SYNC = auto()
     ASSOC_VALIDATE = auto()

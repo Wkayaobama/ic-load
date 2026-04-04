@@ -13,7 +13,7 @@ Use this skill to recover a working pipeline without pretending the clean repo i
    For `ic-load`, start with `salvation.md`.
 
 2. Freeze the real production path before moving code.
-   Capture the exact boundary between validation, staging, dbt, Gold upsert, StackSync sync, and post-sync associations.
+   Capture the exact boundary between validation, staging, dbt, dedupe, explicit Gold approval, Gold upsert, and any later post-Gold sync or mirrored association flow.
 
 3. Extract the runnable spine before cleaning details.
    Preserve working business logic wherever possible.
@@ -30,6 +30,9 @@ Use this skill to recover a working pipeline without pretending the clean repo i
 6. Add a dedupe guardrail before Gold or association execution.
    Do not rely on `NOT EXISTS` alone.
    Prevent duplicate business objects before they can be linked through mirrored association tables.
+
+7. Default the clean runner to stop at Gold.
+   Require explicit approval before any live Gold write, and keep any StackSync sync or mirrored association logic explicit and opt-in until it is ready for live use.
 
 ## Non-Negotiable Rules
 

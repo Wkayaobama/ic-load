@@ -38,6 +38,27 @@ company_hierarchy:
     - "Levenshtein-style or common-root similarity is not a cosmetic dedupe helper; it refines sibling inference after parent selection."
     - "Company hierarchy logic should be packaged either as its own deployable folder or as a dedicated runner adjunct with high-fidelity context."
 
+dedupe_guardrail:
+  non_negotiable: true
+  rule: "Run a staging-vs-reference duplicate guard before Gold upserts and mirrored association writes."
+  block_on_review_in_live_mode: true
+  notes:
+    - "Association table idempotency does not protect against linking the wrong live entity."
+    - "Use benchmark exports and staging tables for calibration before any live production write."
+  thresholds:
+    company:
+      review_score_min: 0.65
+      block_score_min: 0.82
+    contact:
+      review_score_min: 0.60
+      block_score_min: 0.80
+    opportunity:
+      review_score_min: 0.62
+      block_score_min: 0.78
+    case:
+      review_score_min: 0.65
+      block_score_min: 0.82
+
 deal_stage_mapper:
   non_negotiable: true
   authority: "../../ic_load_pipeline/python-ignorethis/deal_stage_mapper.py"

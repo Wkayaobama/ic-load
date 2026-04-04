@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from context.config import DBT_PROJECT_DIR, ENTITIES, dbt_command, latest_bronze_path, load_business_rules, load_entity_resolution_map
+from context.config import (
+    DBT_PROJECT_DIR,
+    ENTITIES,
+    dbt_command,
+    latest_bronze_path,
+    load_business_rules,
+    load_entity_resolution_map,
+)
 from pipeline.state import (
     PipelineContext,
     PipelineStage,
@@ -25,6 +32,7 @@ class PipelineHooks:
     silver_normaliser_factory: Callable[[], Any]
     silver_validator_factory: Callable[[], Any]
     dbt_runner: Callable[[str, bool], bool]
+    dedupe_guarder: Callable[[str, bool], dict[str, Any]]
     gold_upserter: Callable[[str, bool], dict[str, Any]]
     sync_waiter: Callable[[str, bool], dict[str, Any]]
     association_runner: Callable[[str, bool], dict[str, Any]]
@@ -44,10 +52,12 @@ def _default_dbt_runner(entity: str, dry_run: bool) -> bool:
 def build_default_hooks() -> PipelineHooks:
     from pipeline.associations import AssociationBridgeExecutor
     from pipeline.bronze import DuckDBBronzeLoader
+    from pipeline.dedupe import DedupeGuardrail
     from pipeline.gold import GoldUpsertExecutor
     from pipeline.silver import SilverNormaliser, SilverValidator
     from pipeline.sync import StackSyncCheckpoint
 
+    dedupe_guardrail = DedupeGuardrail()
     gold_executor = GoldUpsertExecutor()
     sync_checkpoint = StackSyncCheckpoint()
     assoc_executor = AssociationBridgeExecutor()
@@ -57,6 +67,7 @@ def build_default_hooks() -> PipelineHooks:
         silver_normaliser_factory=SilverNormaliser,
         silver_validator_factory=SilverValidator,
         dbt_runner=_default_dbt_runner,
+        dedupe_guarder=lambda entity, dry_run: dedupe_guardrail.execute(entity, dry_run=dry_run),
         gold_upserter=lambda entity, dry_run: gold_executor.execute(entity, dry_run=dry_run),
         sync_waiter=lambda entity, dry_run: sync_checkpoint.wait(entity, dry_run=dry_run),
         association_runner=lambda entity, dry_run: assoc_executor.execute(entity, dry_run=dry_run),
@@ -74,6 +85,8 @@ def run(
     assoc_only: bool = False,
     verbosity: str = "low",
     probe_mode: bool = False,
+    enable_post_gold: bool = False,
+    approve_gold: bool = False,
     hooks: PipelineHooks | None = None,
     bronze_csv_override: str | None = None,
 ) -> PipelineContext:
@@ -84,6 +97,8 @@ def run(
     owner_blocking = thresholds.get("owner_resolution_blocking", False)
     ctx.metadata["thresholds"] = thresholds
     ctx.metadata["probe_mode"] = probe_mode
+    ctx.metadata["enable_post_gold"] = enable_post_gold
+    ctx.metadata["approve_gold"] = approve_gold
     ctx.metadata["entity_resolution_map"] = load_entity_resolution_map()
     ctx.metadata["business_rules"] = load_business_rules()
 
@@ -118,10 +133,18 @@ def run(
         _finish(ctx)
         return ctx
 
-    # Keep the downstream write path intentionally split so remote collaborators
-    # can see where dbt ends, Gold begins, StackSync sync happens, and associations follow.
+    # Gold is the default final boundary for the clean runner. StackSync sync and
+    # mirrored associations stay available behind an explicit opt-in.
     _run_dbt(ctx, entity, dry_run, hooks)
+    _run_dedupe_guard(ctx, entity, dry_run, probe_mode, hooks)
+    _run_gold_validate(ctx, entity, dry_run, probe_mode, approve_gold)
     _run_gold_upsert(ctx, entity, dry_run, hooks)
+
+    if not enable_post_gold:
+        transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS, reason="gold_upsert_stop")
+        _finish(ctx)
+        return ctx
+
     _run_stacksync_sync(ctx, entity, dry_run, hooks)
     _run_assoc_validate(ctx, entity, dry_run, hooks)
 
@@ -266,6 +289,61 @@ def _run_dbt(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHo
     transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SUCCESS)
 
 
+def _run_dedupe_guard(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    probe_mode: bool,
+    hooks: PipelineHooks,
+) -> None:
+    if not _should_run(ctx, PipelineStage.DEDUPE_GUARD, None):
+        return
+
+    result = hooks.dedupe_guarder(entity, dry_run)
+    ctx.metadata["dedupe_guard"] = result
+
+    block_count = int(result.get("block_count", 0))
+    review_count = int(result.get("review_count", 0))
+    not_applicable = result.get("mode") == "not_applicable"
+
+    if not_applicable:
+        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="not_applicable", entity=entity)
+        return
+
+    if block_count > 0:
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            StageStatus.FAILED,
+            block_count=block_count,
+            review_count=review_count,
+            artifact=result.get("artifact_json"),
+        )
+
+    if review_count > 0:
+        status = StageStatus.WARNING if dry_run or probe_mode else StageStatus.FAILED
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            status,
+            block_count=block_count,
+            review_count=review_count,
+            safe_count=result.get("safe_count", 0),
+            artifact=result.get("artifact_json"),
+        )
+        return
+
+    transition(
+        ctx,
+        PipelineStage.DEDUPE_GUARD,
+        StageStatus.SUCCESS,
+        block_count=block_count,
+        review_count=review_count,
+        safe_count=result.get("safe_count", 0),
+        artifact=result.get("artifact_json"),
+    )
+
+
 def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.GOLD_UPSERT, None):
         return
@@ -276,6 +354,41 @@ def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, hooks: Pi
         StageStatus.SUCCESS,
         mode=result.get("mode"),
         statements=len(result.get("statements", [])),
+    )
+
+
+def _run_gold_validate(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    probe_mode: bool,
+    approve_gold: bool,
+) -> None:
+    del entity
+    if not _should_run(ctx, PipelineStage.GOLD_VALIDATE, None):
+        return
+
+    if dry_run:
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
+        return
+
+    if probe_mode:
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="probe_mode")
+        return
+
+    if not approve_gold:
+        transition(
+            ctx,
+            PipelineStage.GOLD_VALIDATE,
+            StageStatus.FAILED,
+            reason="explicit_gold_validation_required",
+        )
+
+    transition(
+        ctx,
+        PipelineStage.GOLD_VALIDATE,
+        StageStatus.SUCCESS,
+        reason="explicit_gold_validation_received",
     )
 
 
@@ -312,6 +425,8 @@ def _skip_stages_before(ctx: PipelineContext, resume_stage: PipelineStage) -> No
         PipelineStage.SILVER_NORMALISE,
         PipelineStage.SILVER_VALIDATE,
         PipelineStage.DBT_BUILD,
+        PipelineStage.DEDUPE_GUARD,
+        PipelineStage.GOLD_VALIDATE,
         PipelineStage.GOLD_UPSERT,
         PipelineStage.STACKSYNC_SYNC,
         PipelineStage.ASSOC_VALIDATE,
@@ -349,6 +464,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--assoc-only", action="store_true")
     parser.add_argument("--verbosity", choices=["high", "low"], default="low")
     parser.add_argument("--probe-mode", action="store_true")
+    parser.add_argument("--enable-post-gold", action="store_true")
+    parser.add_argument("--approve-gold", action="store_true")
     parser.add_argument("--bronze-csv-override")
     return parser.parse_args()
 
@@ -366,5 +483,7 @@ if __name__ == "__main__":
         assoc_only=args.assoc_only,
         verbosity=args.verbosity,
         probe_mode=args.probe_mode,
+        enable_post_gold=args.enable_post_gold,
+        approve_gold=args.approve_gold,
         bronze_csv_override=args.bronze_csv_override,
     )

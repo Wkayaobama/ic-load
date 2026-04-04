@@ -25,14 +25,15 @@ The core production path is:
 3. Silver normalization cleans and deduplicates
 4. Silver validation is the blocking gate
 5. dbt transforms `staging -> intermediate -> marts`
-6. SQL upserts write to `hubspot.*`
-7. **bidirectional StackSync sync** hydrates CRM IDs and synced record IDs back into PostgreSQL
-8. association bridge SQL runs **after sync**
+6. dedupe guard blocks risky records before live promotion
+7. explicit Gold validation is required before any live `hubspot.*` write
+8. SQL upserts write to `hubspot.*`
 
 Important:
-- the Gold upsert is not the end of the write path
-- the sync checkpoint is a real stage, not an implementation detail
-- association creation depends on post-sync IDs
+- the clean runner stops at Gold by default
+- Gold itself is not implicit; it needs explicit validation/approval
+- downstream sync and mirrored association logic stay preserved, but only behind explicit opt-in later
+- no post-Gold path should run implicitly
 
 ## Architecture Discipline
 
@@ -144,10 +145,9 @@ The must-have runtime core is:
 - Bronze loader + watermarking
 - Silver normalization + validation
 - dbt boundary
+- dedupe guardrail
+- explicit Gold validation gate
 - Gold upsert patterns
-- bidirectional StackSync sync checkpoint
-- engagement upsert
-- association bridge
 - schema/run context
 - Gomplate/Repomix workflow
 - Codespaces/devcontainer bootstrap
@@ -171,6 +171,9 @@ The must-have runtime core is:
 - implemented `context/` runtime loaders and DB contract
 - implemented `pipeline/state.py` with explicit `GOLD_UPSERT` and `STACKSYNC_SYNC` stages
 - implemented thin Gold, sync, and association executors
+- made `DEDUPE_GUARD` the final pre-Gold safety stage
+- made `GOLD_VALIDATE` the explicit live-write approval stage
+- made `GOLD_UPSERT` the default terminal stage in the clean runner
 - implemented deterministic SQL rendering in `sql/`
 - implemented the orchestration probe entrypoint
 - added passing probe and SQL contract tests
