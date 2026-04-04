@@ -1,117 +1,149 @@
 ---
 name: pipeline-salvation
-description: Salvage messy CRM, ETL, and sync-heavy data pipelines into a minimal runnable repo without losing business-critical behavior. Use when Codex needs to extract a functional core from a sprawling codebase, make stage boundaries explicit, preserve non-negotiable algorithms with Repomix, keep Gomplate limited to SQL rendering, prepare Codespaces-safe execution, or design staging-first deduplication and smoke-test guardrails before any production upsert or association write.
+description: Rescue buried but still-functional CRM, ETL, sync-heavy, or data-pipeline codebases by isolating the minimal runnable core, separating critical files from noise, packaging non-negotiable algorithms with Repomix, limiting Gomplate to reusable SQL rendering, hardening devcontainer or Codespaces portability, and advancing through staged probes with explicit confidence thresholds before any live write, sync, or association step. Use when a codebase is messy, partially understood, shared-infrastructure backed, or needs iterative salvation rather than a rewrite.
 ---
 
 # Pipeline Salvation
 
-Use this skill to recover a working pipeline without pretending the clean repo is a rewrite.
+Recover the working core of a messy pipeline without pretending the right answer is a rewrite.
 
-## Core Workflow
+## Core Stance
 
-1. Open the project's re-entry file first.
-   For `ic-load`, start with `salvation.md`.
+- Optimize for salvation, not perfection.
+- Preserve proven business behavior before cleaning style.
+- Treat confidence thresholds as first-class deliverables.
+- Keep the clean repo smaller than the legacy workspace.
+- Refuse live writes until the runnable boundary and the evidence threshold are both explicit.
 
-2. Freeze the real production path before moving code.
-   Capture the exact boundary between validation, staging, dbt, dedupe, explicit Gold approval, Gold upsert, and any later post-Gold sync or mirrored association flow.
+## Salvation Loop
 
-3. Extract the runnable spine before cleaning details.
-   Preserve working business logic wherever possible.
-   Prefer import cleanup, boundary cleanup, and packaging cleanup over rewrites.
+1. Freeze the success threshold first.
+   Define what counts as enough functionality to save.
+   Measure coverage by working behavior, not by percentage of files copied.
 
-4. Keep SQL generation and context packaging separate.
-   Use Gomplate for repetitive SQL patterns only.
-   Use Repomix for the narrow context bundle that explains the runtime.
+2. Restate the real execution boundary in plain language.
+   Name each step in order.
+   Separate validation, staging, normalization, dbt, upsert, sync, and association behavior instead of collapsing them into one blur.
 
-5. Prove staging and reconciliation contracts before any live write.
-   Start with `information_schema` and `staging.*`.
-   Treat production-facing writes as blocked until staging, IDs, and reverse-lookup behavior are understood.
+3. Separate the codebase into four buckets.
+   Keep: directly powers the runnable core.
+   Rewrite-minimal: needed, but only for boundary cleanup, import cleanup, or packaging cleanup.
+   Defer: useful later, not required for the first confidence threshold.
+   Drop: noise, historical artifacts, exports, UI sidecars, and dead branches.
 
-6. Add a dedupe guardrail before Gold or association execution.
-   Do not rely on `NOT EXISTS` alone.
-   Prevent duplicate business objects before they can be linked through mirrored association tables.
-   If the guardrail is not yet entity-config-wide and calibrated, keep it probe-only instead of forcing it into live execution.
+4. Extract a thin runnable spine before cleaning details.
+   Move the orchestration boundary, state tracking, and runtime contracts first.
+   Leave working transformation logic in place unless there is a compelling reason to rewrite.
 
-7. Default the clean runner to stop at Gold.
-   Require explicit approval before any live Gold write, and keep any StackSync sync or mirrored association logic explicit and opt-in until it is ready for live use.
+5. Externalize the repetitive and fragile parts.
+   Use Gomplate for reusable SQL shapes only.
+   Use Repomix for the narrow context bundle that preserves the non-negotiable execution logic.
 
-## Non-Negotiable Rules
+6. Build proof in ascending risk order.
+   Start with local contract tests.
+   Then run staging-only probes.
+   Then run read-only live metadata or schema probes.
+   Only then consider approved live execution.
 
-- Preserve business behavior over elegance in the first salvage pass.
-- Keep business fields separate from StackSync resolution metadata.
-- Treat company hierarchy as one package: parent-child definition, sibling inference, and common-root grouping together.
-- Treat communication unflattening as structural logic, not optional context.
-- Apply UTF-8/mojibake cleanup and deterministic date serialization before staging normalization.
-- Never write to live production tables until the guardrails and the write target are explicitly approved.
+7. Reassess when a guardrail overreaches.
+   If a protective mechanism blocks too much of the core path, downgrade it to probe-only, recalibrate it, and keep moving.
+   Do not force an immature guardrail into production just because its logic sounds correct.
 
-## Dedupe Gate
+8. Commit recovery checkpoints.
+   Save the repo after each stable boundary so context can be recovered quickly later.
 
-Install a duplicate-prevention gate before:
+For the iterative loop in more detail, read [references/salvation-loop.md](references/salvation-loop.md).
 
-- Gold upsert
-- mirrored association writes
+## What To Preserve
 
-Use three decisions:
+Preserve these kinds of assets aggressively:
 
-- `safe`: allow downstream write
-- `review`: materialize for inspection, do not write
-- `block`: stop the write path
+- stage boundaries and runner contracts
+- schema contracts and threshold rules
+- entity configuration and legacy-to-canonical mapping
+- non-negotiable algorithms such as hierarchy reconstruction, reconciliation, or classification
+- idempotent SQL patterns
+- smoke probes and assessment artifacts that prove the contract
 
-Use composite matching, not one signal alone:
+Treat these as likely noise unless proven otherwise:
 
-- canonical ID collisions
-- exact identity fields such as email, phone, or domain where applicable
-- normalized name similarity
-- company hierarchy context and common-root grouping
-- corroborating fields such as LinkedIn, address, company linkage, or owner context when available
+- raw archives that are only historical evidence
+- dashboards, workbook front-ends, and reporting shells
+- one-off repair scripts with no surviving business role
+- instance-specific exports copied into the runtime repo
+- convenience wrappers that hide the real execution order
 
-Important:
-
-- Association idempotency prevents duplicate association rows.
-- It does not prevent linking the wrong live entity.
-- Mirrored association tables can bypass native CRM friction, so they must inherit the same safety decision as the entity upsert path.
-
-For the current dedupe framing, read [references/dedupe-guardrails.md](references/dedupe-guardrails.md).
-
-## Gomplate And Repomix Discipline
+## Gomplate And Repomix Rules
 
 Use Gomplate for:
 
 - entity upserts
 - engagement upserts
 - association bridge SQL
+- other repetitive SQL patterns where idempotency and schema constants matter
 
 Do not use Gomplate for:
 
-- dbt model logic
 - Python normalization logic
-- workflow orchestration
+- dbt model logic
+- orchestration logic
+- business-rule inference
 
 Use Repomix to preserve:
 
 - rendered SQL
 - schema and run context
-- validation rules
-- staging metadata snapshots
-- non-negotiable algorithm sources such as company hierarchy and communication unflattening
+- validation and threshold rules
+- core mapping contracts
+- non-negotiable algorithm sources
+- minimal benchmark or target-shape references needed to reconstruct behavior correctly
 
-Do not bundle:
+Do not let Repomix depend on a wider parent workspace once the clean repo is meant to travel.
 
-- Bronze payload archives
-- memory dumps
-- broad benchmark clutter
-- production table exports
+For packaging and second-machine discipline, read [references/packaging-and-portability.md](references/packaging-and-portability.md).
 
-## Safe Testing Order
+## Probe Discipline
 
-1. Validate local contracts and render output.
-2. Run staging-only smoke tests.
-3. Confirm reverse-lookup ID behavior from staging and metadata.
-4. Confirm duplicate-prevention gate behavior.
-5. Ask for explicit approval before any production-facing write.
+Use probes to turn ambiguity into evidence.
 
-When in doubt, stay on the staging side of the boundary.
+Progress in this order:
+
+1. Local unit or contract tests
+2. Generated artifacts and rendered output
+3. Staging-only probes
+4. Read-only live metadata probes
+5. Approved live execution
+
+At each layer, ask:
+
+- Does the output match the target contract?
+- Does the boundary still match the real production path?
+- Is the result portable to a second machine?
+- Is confidence increasing or are we hiding uncertainty behind structure?
+
+If you need confidence thresholds or calibration gates, read [references/thresholds-and-proof.md](references/thresholds-and-proof.md).
+
+## Non-Negotiable Rules
+
+- Keep business fields separate from resolution infrastructure such as sync IDs.
+- Treat UTF-8 or mojibake cleanup and deterministic date serialization as cross-entity concerns when the codebase shows that pattern.
+- Treat hierarchy logic as one package when sibling inference depends on parent selection or common-root matching.
+- Treat communication unflattening or equivalent structural normalization as first-class logic, not optional commentary.
+- Require explicit approval before any live production write.
+- Prefer probe-only guardrails over premature production guardrails.
+
+## Reuse Pattern
+
+When applying this skill to a new project:
+
+1. Create or open a re-entry file.
+2. Write the canonical execution path.
+3. Define the first confidence threshold.
+4. Build the minimal spine that can prove that threshold.
+5. Package the critical context so another agent can pick the work back up.
+6. Only then widen the executable boundary.
 
 ## Read Next
 
-When applying this skill to `ic-load`, read [references/source-reading-order.md](references/source-reading-order.md).
+- Use [references/source-reading-order.md](references/source-reading-order.md) to rebuild context.
+- Use [references/dedupe-guardrails.md](references/dedupe-guardrails.md) only when duplicate prevention is part of the active rescue path.

@@ -1,4 +1,4 @@
 interface:
   display_name: "Pipeline Salvation"
-  short_description: "Salvage messy CRM/data pipelines safely"
-  default_prompt: "Use $pipeline-salvation to recover the functional core of a messy CRM or sync-heavy pipeline into a clean, staged, reproducible repo before any live production write."
+  short_description: "Rescue buried pipelines with staged proof"
+  default_prompt: "Use $pipeline-salvation to isolate the functional core of a messy pipeline, separate critical files from noise, package the non-negotiable context with Gomplate and Repomix discipline, assess second-machine portability, and advance only through threshold-based probes before any live write."
