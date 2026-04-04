@@ -7,6 +7,12 @@ from typing import Any
 
 import yaml
 
+# Keep all core paths repo-relative so the same runtime works from:
+# - Codespaces: /workspaces/icalps
+# - WSL / remote Linux: /home/<user>/.../ic-load
+# - Windows local checkout: C:\...\ic-load
+# The only path contract collaborators should rely on is "repo root contains
+# context/, pipeline/, sql/, ValidationRules/, and GomplateRepoMix/".
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 ARTIFACTS_DIR.mkdir(exist_ok=True)

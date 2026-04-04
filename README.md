@@ -49,6 +49,28 @@ The repo is now set up so a fresh Codespace can validate the salvage spine witho
 - repository-level Codespaces secrets should provide live PostgreSQL credentials when needed
 - the default remote-safe path remains the orchestration probe, not live production writes
 
+## WSL / Folder Layout
+
+The runtime should also stay executable from WSL or VS Code Remote Development.
+
+- preferred Codespaces path: `/workspaces/icalps`
+- preferred WSL clone path: `/home/<user>/src/ic-load` or another Linux-side workspace
+- acceptable Windows-mounted WSL path for quick inspection: `/mnt/c/.../IC_Load/ic-load`
+
+For active development, prefer the Linux filesystem inside WSL over `/mnt/c/...` because Python tooling, Git, and file watching are usually more reliable there.
+
+The intended repo-root layout is:
+
+- `context/`
+- `pipeline/`
+- `sql/`
+- `dbt/`
+- `tests/`
+- `ValidationRules/`
+- `GomplateRepoMix/`
+
+All runtime code should resolve paths from the repo root rather than from user-specific absolute paths.
+
 ## Verification
 
 The current salvage spine is covered by:
@@ -57,16 +79,10 @@ The current salvage spine is covered by:
 pytest tests -q -p no:cacheprovider
 ```
 
-## Local Status
+## Repository Status
 
-The repo was created locally from the reusable salvage work.
+The clean salvage repo now lives at `https://github.com/Wkayaobama/ic-load.git`.
 
-GitHub remote creation was not completed from this shell because `gh auth status`
-shows the configured token is invalid for account `Wkayaobama`.
-
-When auth is fixed, create/push the remote with:
-
-```powershell
-gh auth login -h github.com
-gh repo create ic-load --private --source . --remote origin --push
-```
+Use the remote repo as the collaboration anchor, and treat local Windows, WSL,
+and Codespaces checkouts as interchangeable working copies of the same
+repo-root layout.

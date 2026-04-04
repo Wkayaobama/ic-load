@@ -76,6 +76,16 @@ Do not package these into the clean repo surface:
 
 Those may remain in the legacy workspace for reference, but not in the clean runtime repo.
 
+## Remote Path Discipline
+
+Assume the clean repo can be opened from:
+- Codespaces: `/workspaces/icalps`
+- WSL / remote Linux: `/home/<user>/.../ic-load`
+- Windows local checkout: `C:\...\IC_Load\ic-load`
+
+Prefer Linux-side paths in WSL for real development work.
+Do not reintroduce collaborator-specific absolute path assumptions into the runtime.
+
 ## Current Baseline Docs
 
 Read these in order:
