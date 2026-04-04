@@ -36,8 +36,18 @@ This repo does not cover:
 
 - `python -m pipeline.runner --probe-mode --entity company --bronze-csv-override probe.csv`
 - `python -m pipeline.probe --entity company`
+- `python -m pipeline.probe --entity communication`
 
 The first probe is intentionally orchestration-focused. It proves stage sequencing and boundary clarity without requiring live production writes.
+
+## Codespaces / Remote Use
+
+The repo is now set up so a fresh Codespace can validate the salvage spine without a local env-file.
+
+- install uses [requirements.txt](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/requirements.txt)
+- post-create runs [scripts/codespace-smoke.sh](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/scripts/codespace-smoke.sh)
+- repository-level Codespaces secrets should provide live PostgreSQL credentials when needed
+- the default remote-safe path remains the orchestration probe, not live production writes
 
 ## Verification
 

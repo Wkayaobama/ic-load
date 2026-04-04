@@ -131,6 +131,10 @@ The must-have runtime core is:
 - implemented the orchestration probe entrypoint
 - added passing probe and SQL contract tests
 - generated rendered SQL outputs under `sql/rendered/`
+- added `requirements.txt` for container/bootstrap reproducibility
+- added `pipeline/bronze.py` so the clean runner owns Bronze loading locally
+- removed the devcontainer env-file dependency for Codespaces startup
+- added `scripts/codespace-smoke.sh` for a remote-safe smoke path
 
 ### Next Approved Iteration
 
@@ -141,6 +145,7 @@ Priority order:
 - decide whether sibling/parent company association handling belongs in the supported core
 - wire optional live DB/dbt hooks behind the existing thin runtime boundary
 - tighten Repomix bundle generation around the rendered SQL outputs
+- push the local salvage history to the GitHub remote and verify Codespaces boot there
 
 ## Resume Instruction
 

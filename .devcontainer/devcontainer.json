@@ -2,7 +2,6 @@
   "name": "IC_Load",
   "image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
   "workspaceFolder": "/workspaces/icalps",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/icalps,type=bind,consistency=cached",
   "features": {
     "ghcr.io/devcontainers-contrib/features/gomplate:1": {
       "version": "3.11.7"
@@ -18,10 +17,6 @@
     "ICALPS_PROJECT_ROOT": "/workspaces/icalps",
     "PYTHONPATH": "/workspaces/icalps"
   },
-  "runArgs": [
-    "--env-file",
-    ".devcontainer/devcontainer.env"
-  ],
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "customizations": {
     "vscode": {

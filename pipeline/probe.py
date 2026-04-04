@@ -53,6 +53,7 @@ class _ProbeValidator:
 
 
 def make_probe_hooks(*, warning_only: bool = False) -> PipelineHooks:
+    """Build a remote-safe orchestration probe that avoids live external writes."""
     return PipelineHooks(
         bronze_loader_factory=_ProbeBronzeLoader,
         silver_normaliser_factory=_ProbeNormaliser,
@@ -65,6 +66,7 @@ def make_probe_hooks(*, warning_only: bool = False) -> PipelineHooks:
 
 
 def run_orchestration_probe(entity: str = "company", *, warning_only: bool = False) -> Any:
+    """Exercise the full stage contract without requiring a live database or StackSync sync."""
     return run(
         entity=entity,
         dry_run=False,

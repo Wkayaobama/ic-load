@@ -19,6 +19,8 @@ from pipeline.state import (
 
 @dataclass
 class PipelineHooks:
+    """Inject the live or probe implementations behind each stage boundary."""
+
     bronze_loader_factory: Callable[[], Any]
     silver_normaliser_factory: Callable[[], Any]
     silver_validator_factory: Callable[[], Any]
@@ -75,6 +77,7 @@ def run(
     hooks: PipelineHooks | None = None,
     bronze_csv_override: str | None = None,
 ) -> PipelineContext:
+    """Execute the salvage runner while keeping each major boundary explicit."""
     hooks = hooks or build_default_hooks()
     ctx = PipelineContext(entity=entity)
     thresholds = load_thresholds(entity)
@@ -113,6 +116,8 @@ def run(
         _finish(ctx)
         return ctx
 
+    # Keep the downstream write path intentionally split so remote collaborators
+    # can see where dbt ends, Gold begins, StackSync sync happens, and associations follow.
     _run_dbt(ctx, entity, dry_run, hooks)
     _run_gold_upsert(ctx, entity, dry_run, hooks)
     _run_stacksync_sync(ctx, entity, dry_run, hooks)

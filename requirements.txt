@@ -1,0 +1,5 @@
+duckdb
+pandas
+psycopg2-binary
+PyYAML
+pytest

@@ -25,7 +25,11 @@ def _load_legacy_module(module_name: str, filename: str) -> ModuleType:
 
 
 class SilverNormaliser:
-    """Thin salvage wrapper around the proven legacy Silver normaliser."""
+    """Thin salvage wrapper around the proven legacy Silver normaliser.
+
+    This keeps the validated business logic alive while the clean repo owns the
+    orchestration, SQL rendering, and remote execution surface around it.
+    """
 
     def __init__(self):
         module = _load_legacy_module("ic_load_legacy_silver_normalise", "silver_normalise.py")
