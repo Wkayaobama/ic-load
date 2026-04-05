@@ -30,6 +30,25 @@ class GoldUpsertExecutor:
         elif normalized == "communication":
             for comm_type in ("Calls", "Tasks", "Notes", "Meetings"):
                 statements.append((f"engagement_{comm_type.lower()}.sql", render_engagement_upsert(comm_type)))
+        elif normalized == "case":
+            # Case/Ticket Gold upsert — GATED: live_push_ready=FALSE
+            # Do not execute until:
+            #   1. stg_case_v2 assessment probe shows match rate >= 95%
+            #   2. case_stage_mapper implemented with confirmed HubSpot stage IDs
+            #   3. stacksync_record_id_* column name for tickets confirmed from portal
+            #   4. Existing HubSpot tickets deleted and user has given explicit green light
+            # The SQL is read from sql/case/06_gold_upsert.sql and rendered to disk;
+            # execution only proceeds when --approve-gold is passed to the runner.
+            sql_path = Path(__file__).resolve().parent.parent / "sql" / "case" / "06_gold_upsert.sql"
+            if sql_path.exists():
+                statements.append(("upsert_case.sql", sql_path.read_text(encoding="utf-8")))
+            else:
+                return {
+                    "entity": entity,
+                    "statements": [],
+                    "mode": "not_applicable",
+                    "reason": "06_gold_upsert.sql not present — confirm stage IDs and run assessment probe first",
+                }
         else:
             return {"entity": entity, "statements": [], "mode": "not_applicable"}
 

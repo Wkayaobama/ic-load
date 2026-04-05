@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
+from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
 
 from context.config import PROJECT_ROOT
+from context.db import get_connection
 
 _LEGACY_ROOT = PROJECT_ROOT.parent / "ic_load_pipeline" / "python-ignorethis"
+
+# Path to the Case Silver SQL files (self-contained, no legacy dependency)
+_CASE_SQL_DIR = PROJECT_ROOT / "sql" / "case"
 
 
 def _load_legacy_module(module_name: str, filename: str) -> ModuleType:
@@ -29,26 +33,116 @@ class SilverNormaliser:
 
     This keeps the validated business logic alive while the clean repo owns the
     orchestration, SQL rendering, and remote execution surface around it.
+
+    For 'case', the normaliser is self-contained in sql/case/ and does NOT
+    depend on the legacy module path — it uses native SQL executed via context.db.
     """
 
     def __init__(self):
-        module = _load_legacy_module("ic_load_legacy_silver_normalise", "silver_normalise.py")
-        self._delegate = module.SilverNormaliser()
+        # Legacy delegate loaded lazily; case entity uses its own path
+        self._legacy_delegate: Any = None
+
+    def _ensure_legacy(self) -> None:
+        if self._legacy_delegate is None:
+            module = _load_legacy_module("ic_load_legacy_silver_normalise", "silver_normalise.py")
+            self._legacy_delegate = module.SilverNormaliser()
+
+    def normalise_case(self) -> dict[str, Any]:
+        """Materialise staging.stg_case_v2 from the Bronze raw stg_cases table.
+
+        Executes sql/case/02_stg_case_v2_materialize.sql directly against the
+        PostgreSQL instance. No legacy module dependency.
+
+        Returns a summary dict with row_count and column coverage metrics.
+        """
+        sql_path = _CASE_SQL_DIR / "02_stg_case_v2_materialize.sql"
+        if not sql_path.exists():
+            raise RuntimeError(f"Case Silver SQL not found: {sql_path}")
+
+        sql = sql_path.read_text(encoding="utf-8")
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                # The last statement in the file is a SELECT returning coverage metrics
+                try:
+                    row = cur.fetchone()
+                    if row and cur.description is not None:
+                        cols = [desc[0] for desc in cur.description]
+                        return dict(zip(cols, row))
+                except Exception:
+                    pass
+            conn.commit()
+
+        return {"entity": "case", "status": "materialised"}
+
+    def run_all(self) -> None:
+        """Delegate to legacy normaliser for all non-case entities."""
+        self._ensure_legacy()
+        self._legacy_delegate.run_all()
 
     def __getattr__(self, item: str) -> Any:
-        return getattr(self._delegate, item)
+        self._ensure_legacy()
+        return getattr(self._legacy_delegate, item)
+
+
+@dataclass
+class _ValidationResult:
+    name: str
+    passed: bool
+    severity: str
+    row_count_failing: int
+    notes: str
 
 
 class SilverValidator:
-    """Thin salvage wrapper around the proven legacy Silver validator."""
+    """Silver validator.
 
-    def __init__(self):
-        module = _load_legacy_module("ic_load_legacy_validate_silver", "validate_silver.py")
-        self._delegate = module.SilverValidator()
+    For 'case': runs sql/case/04_silver_validate.sql directly.
+    For all other entities: delegates to the legacy validator.
+    """
 
-    @property
-    def results(self):
-        return self._delegate.results
+    def __init__(self, entity: str = ""):
+        self._entity = entity.lower()
+        self._legacy_delegate: Any = None
+        self.results: list[_ValidationResult] = []
+
+    def _ensure_legacy(self) -> None:
+        if self._legacy_delegate is None:
+            module = _load_legacy_module("ic_load_legacy_validate_silver", "validate_silver.py")
+            self._legacy_delegate = module.SilverValidator()
 
     def run_checks(self) -> bool:
-        return self._delegate.run_checks()
+        if self._entity == "case":
+            return self._run_case_checks()
+        self._ensure_legacy()
+        result = self._legacy_delegate.run_checks()
+        self.results = list(getattr(self._legacy_delegate, "results", []))
+        return result
+
+    def _run_case_checks(self) -> bool:
+        sql_path = _CASE_SQL_DIR / "04_silver_validate.sql"
+        if not sql_path.exists():
+            raise RuntimeError(f"Case validation SQL not found: {sql_path}")
+
+        sql = sql_path.read_text(encoding="utf-8")
+        self.results = []
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+                cols = [desc[0] for desc in cur.description] if cur.description is not None else []
+
+        for row in rows:
+            d = dict(zip(cols, row))
+            self.results.append(_ValidationResult(
+                name=d["check_name"],
+                passed=bool(d["passed"]),
+                severity=d["severity"],
+                row_count_failing=int(d["row_count_failing"] or 0),
+                notes=d.get("notes", ""),
+            ))
+
+        stop_failures = [r for r in self.results if r.severity == "STOP" and not r.passed]
+        return len(stop_failures) == 0

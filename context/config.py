@@ -32,6 +32,7 @@ _BRONZE_PREFIX = {
     "company": "Bronze_Company",
     "contact": "Bronze_Person",
     "opportunity": "Bronze_Opportunity",
+    "case": "Bronze_Case",
 }
 
 
@@ -68,6 +69,16 @@ ENTITIES: dict[str, EntityConfig] = {
         bronze_csv="Bronze_Opportunity.csv",
         staging_table="stg_opportunity",
         primary_key="Oppo_OpportunityId",
+    ),
+    # Case/Ticket — import_order=5, live_push_ready=FALSE
+    # Bronze CSV override: artifacts/assessment/case_ticket_snippet.csv
+    # Silver target: staging.stg_case_v2 (assessed) → staging.stg_case (live, after promotion)
+    # Gold target: hubspot.tickets (NOT YET LIVE — awaiting stage mapper + match rate ≥95%)
+    "case": EntityConfig(
+        name="case",
+        bronze_csv="Bronze_Case.csv",
+        staging_table="stg_cases",      # Bronze raw table (legacy preservation)
+        primary_key="Case_CaseId",
     ),
 }
 

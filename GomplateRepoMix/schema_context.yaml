@@ -111,6 +111,13 @@ association_type_ids:
   notes_deal: 214
   tasks_company: 192
   tasks_contact: 204
+  # Ticket association type IDs: TBD — confirm from portal 9201667 before rendering live SQL
+  # GET https://api.hubapi.com/crm/v4/associations/TICKET/COMPANY/labels  → typeId
+  # GET https://api.hubapi.com/crm/v4/associations/TICKET/CONTACT/labels  → typeId
+  # GET https://api.hubapi.com/crm/v4/associations/TICKET/DEAL/labels     → typeId
+  ticket_company: 0    # PLACEHOLDER — replace with confirmed int before live push
+  ticket_contact: 0    # PLACEHOLDER
+  ticket_deal: 0       # PLACEHOLDER
 
 association_bridge:
   idempotency_guard: "NOT EXISTS"
@@ -129,6 +136,42 @@ association_bridge:
     - comm_type: "Tasks"
       targets: ["company", "contact"]
     # Meetings: DEFERRED — see comment above
+
+# association_object_bridge covers direct-FK entity associations (not communication engagements).
+# These use association_object.sql.tmpl, not association_bridge.sql.tmpl.
+# Source join: hubspot.<object_table> → staging.stg_<entity>_v2 on icalps_<entity>_id
+# Two-pass: Pass A (StackSync UUID), Pass B (legacy icalps_*_id fallback), NOT EXISTS guard.
+#
+# Ticket: live_push_ready=FALSE — type IDs are placeholders until confirmed from portal.
+# All other direct-FK entities (Company→Contact, Deal→Company, etc.) use StackSync outgoing
+# sync rather than an insert bridge — they are NOT listed here.
+association_object_bridge:
+  idempotency_guard: "NOT EXISTS"
+  supported_patterns:
+    - object_type: "ticket"
+      gold_table: "hubspot.tickets"
+      silver_table: "staging.stg_case_v2"
+      pk_column: "icalps_ticket_id"
+      # live_push_ready=FALSE: do not render live SQL until type IDs confirmed
+      targets:
+        - name: "company"
+          assoc_key: "ticket_company"
+          fk_column: "icalps_company_id"
+          gold_table: "hubspot.companies"
+          icalps_id_column: "icalps_company_id"
+          stacksync_column: "stacksync_record_id_9vpp8v"
+        - name: "contact"
+          assoc_key: "ticket_contact"
+          fk_column: "icalps_contact_id"
+          gold_table: "hubspot.contacts"
+          icalps_id_column: "icalps_contact_id"
+          stacksync_column: "stacksync_record_id_nd85zc"
+        - name: "deal"
+          assoc_key: "ticket_deal"
+          fk_column: "icalps_deal_id"    # stg_case_v2 does not have this yet — add when case→deal FK is confirmed
+          gold_table: "hubspot.deals"
+          icalps_id_column: "icalps_deal_id"
+          stacksync_column: "stacksync_record_id_87b7vd"
 
 stage_mappings:
   validation_gate: "SILVER_VALIDATE"

@@ -952,6 +952,44 @@ Decide whether to copy `silver_normalise.py` and `validate_silver.py` into
 `ic-load` or replace them with clean rewrites. Until then, Codespaces execution
 remains blocked for Silver normalization.
 
+### M6 — Ticket Association SQL Written By Hand, Bypassing Gomplate (SELF-CORRECTED 2026-04-05)
+
+**What happened:**
+During the Case/Ticket pipeline implementation, `sql/case/07_association_ticket_company.sql`
+and `sql/case/08_association_ticket_contact.sql` were authored as raw SQL files instead of
+being rendered from `association_bridge.sql.tmpl`. This created a second source of truth:
+the template system would not regenerate these files on `bash render_associations.sh`, and
+any future schema_context.yaml change (e.g. confirmed association type IDs) would silently
+diverge from the hand-authored SQL.
+
+**Root cause:**
+The existing Gomplate template (`association_bridge.sql.tmpl`) is parameterized for the
+Communication entity pattern (`fct_communication_*` bridge tables, `unique_id LIKE 'icalps_%'`).
+Ticket associations use a different source pattern: `stg_case_v2` direct FK join on
+`icalps_ticket_id`, with no `fct_*` bridge table. Rather than extending the template
+system, the instinct was to write SQL directly — breaking idempotency.
+
+**Self-correction applied:**
+1. The two hand-written files were deleted immediately.
+2. A new template `association_object.sql.tmpl` was created to cover direct-FK entities
+   (Ticket, and in future any entity with a direct PK join rather than a communication bridge).
+3. `schema_context.yaml` extended with a new `association_object_bridge` block covering
+   Ticket→Company, Ticket→Contact, Ticket→Deal (type IDs TBD from portal).
+4. `render_associations.sh` extended with a second loop over `association_object_bridge`
+   patterns, using the new template.
+5. All Ticket association SQL now lives exclusively in `sql/rendered/` as rendered output.
+
+**Key distinction captured in template design:**
+- `association_bridge.sql.tmpl` → Communication engagements (calls/notes/tasks): source is
+  `fct_communication_*`, joined via `unique_id = 'icalps_' || icalps_communication_id::text`
+- `association_object.sql.tmpl` → Direct-FK entities (tickets, future objects): source is
+  `hubspot.<object_table>`, joined via `icalps_<entity>_id = stg_<entity>.icalps_<entity>_id`
+
+**Idempotency guarantee restored:**
+Re-running `bash GomplateRepoMix/render_associations.sh` now regenerates ALL association SQL
+(both communication and object-type) from a single source of truth. Any schema_context.yaml
+update (e.g. confirmed type IDs) propagates automatically on next render.
+
 ### M5 — Meetings Have No Association Type IDs (DOCUMENTED)
 
 **What is wrong:**
