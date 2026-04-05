@@ -1,105 +1,131 @@
-You are an IC'ALPS pipeline engineer working on the dbt communication pipeline, Silver normalization, and mirrored association bridge layers of a StackSync-mirrored PostgreSQL CRM database.
+## ENTITY CARD LOAD — STATE BEFORE RENDERING
+## Usage: claude -p < communication_association.txt > output.txt
 
-Your task is to produce a complete, executable implementation plan for the Communication entity model including the dbt lineage, two-pass association bridge, and strict duplicate prevention. The output of this prompt can be piped directly: claude -p < communication_association.txt > output.txt
+Entity card: context/cards/communication.yaml
+Load this card first. All decisions in this prompt are governed by the card.
 
-## Entity Model: Communication
+Medallion position:
+  Raw     → staging.raw_stg_communication       (77,100 rows)
+  Bronze  → staging.stg_communication           (29,150 rows)
+  Silver  → staging.stg_communication_normalised (6,127 rows — with BOTH anchors)
+  dbt:      int_communication_classified
+            int_communication_reconciled
+  Gold:     hubspot.calls / hubspot.notes / hubspot.tasks
+  Deferred: hubspot.meetings (NOT in active association bridge)
 
-### Source → dbt lineage
-staging.raw_stg_communication (77,100 rows)
-  → staging.stg_communication (29,150 rows)
-  → staging.stg_communication_normalised (6,127 rows)
-  → dbt: int_communication_classified
-       → int_communication_reconciled
-          → staging.fct_communication_calls    (5,959 rows)
-          → staging.fct_communication_notes   (11,994 rows)
-          → staging.fct_communication_tasks      (145 rows)
-          → staging.fct_communication_meetings (59,043 rows) — DEFERRED from association bridge
+Primary key:  Comm_CommunicationId  →  icalps_communication_id (bigint)
+Idempotency key:  unique_id = 'icalps_' || icalps_communication_id::text
+StackSync:  Resolution uses unique_id, NOT a single stacksync_record_id column
 
-### Idempotency key
-unique_id = 'icalps_' || icalps_communication_id::text
-This key is used across all hubspot.calls, hubspot.notes, hubspot.tasks tables.
+FK dependencies (all WARN):
+  Company → legacy_company_id → hubspot.companies.icalps_company_id
+  Contact → legacy_contact_id → hubspot.contacts.icalps_contact_id
+  Deal    → legacy_deal_id    → hubspot.deals.icalps_deal_id
+Import order: 4 (all parent entities must be upserted FIRST)
 
-### int_communication_classified
-Maps Comm_Action to HubSpot activity class:
-  Comm_Action → 'calls' | 'notes' | 'tasks' | 'meetings'
-This classification drives which fct_communication_* mart the row lands in.
+Anchor completeness rule:
+  Zero rows in stg_communication_normalised lack BOTH company AND person anchors.
+  This is a STOP check. It was verified in live staging snapshot 2026-04-04.
 
-### int_communication_reconciled
-Attaches resolved HubSpot record IDs via legacy-ID reconciliation:
-  legacy_company_id  (int) = Company_Id from source
-  legacy_contact_id  (int) = Person_Id from source
-  legacy_deal_id     (int) = Comm_OpportunityId from source
-  associated_company_id  (UUID) = resolved stacksync_record_id_9vpp8v
-  associated_contact_id  (UUID) = resolved stacksync_record_id_nd85zc
-  associated_deal_id     (UUID) = resolved stacksync_record_id_87b7vd
+Hierarchy unflattening (QA/probe only — not production write path):
+  Algorithm: reverse-depth-first
+  Levels: Level_000=Company_Name, Level_001=Person name, Level_002=Subject/ID
+  NodeKey: "|".join(path_parts)
 
-### Hierarchy unflattening (QA/probe use, not production write path)
-Source: staging.raw_stg_communication
-Levels:
-  Level_000 = Company_Name              (fillna "Unknown Company")
-  Level_001 = Person_FirstName + " " + Person_LastName  (fillna "Unknown Person")
-  Level_002 = Comm_Subject[:50] + " (#id)"  or  "Communication #id"
+Two-pass association bridge:
+  Pass A: fct.associated_*_id → target.stacksync_record_id_*  (UUID path)
+  Pass B: fct.legacy_*_id     → target.icalps_*_id            (fallback)
+  Idempotency: NOT EXISTS on association table
+  Set operation: UNION (not UNION ALL)
+  Prerequisite for Pass A: STACKSYNC_SYNC must have completed
 
-Algorithm (reverse-depth-first):
-  For level N in [0,1,2]:
-    Build path = [Level_000..Level_N]
-    NodeKey = "|".join(path)
-    If NodeKey not in node_lookup → emit node: NodeKey(int), NodeName, ParentKey, Depth=N
-    node_lookup[NodeKey] = node_counter
+Association probe priority (from card, by live UUID readiness):
+  1. Calls → company   (99.7% UUID ready) ← PROBE FIRST
+  2. Calls → contact   (79.8%)
+  3. Notes → contact   (71.0%)
+  4. Notes → company   (12.6%)
+  5. Notes → deal      (2.1%)
+  6. Tasks → company   (17.2%)
+  7. Tasks → contact   (16.6%)
+  DEFERRED: Meetings (0.8% UUID ready — do NOT probe)
 
-Output: hierarchy_communication.csv (NodeKey, NodeName, ParentKey, Depth)
-        hierarchy_tree.json (nested, max_depth=2)
+Dedup: unique_id-based only. No scorer needed for key dedup.
+MCP fallback: optional for note content similarity comparisons.
 
-### Two-pass association bridge
-Runs AFTER STACKSYNC_SYNC so stacksync_record_id_* are populated.
+Pipeline status:
+  engagement upsert: live_push_ready=true
+  association bridge: opt-in via --enable-post-gold
+Runner arg:  --entity communication
 
-Pass A — UUID join (preferred):
-  fct.associated_*_id → target.stacksync_record_id_*
-  Requires STACKSYNC_SYNC to have completed.
+---
 
-Pass B — legacy ID fallback:
-  fct.legacy_*_id → target.icalps_*_id
-  Used when associated_*_id IS NULL.
+## CONTEXT: You are an IC'ALPS pipeline engineer
 
-Both passes use NOT EXISTS idempotency guard. UNION (not UNION ALL) between passes.
+You are working on the dbt communication pipeline, Silver normalization,
+and mirrored association bridge layers. The entity card is the canonical state.
 
-### Supported association type IDs
-  calls_company   = 182   → hubspot.associations_calls_company
-  calls_contact   = 194   → hubspot.associations_calls_contact
-  notes_company   = 190   → hubspot.associations_notes_company
-  notes_contact   = 202   → hubspot.associations_notes_contact
-  notes_deal      = 214   → hubspot.associations_notes_deal
-  tasks_company   = 192   → hubspot.associations_tasks_company
-  tasks_contact   = 204   → hubspot.associations_tasks_contact
-  meetings: DEFERRED (99.2% rows have no UUID anchor; type IDs not yet confirmed)
+int_communication_classified maps Comm_Action to HubSpot activity class.
+int_communication_reconciled attaches resolved stacksync_record_id_* values.
+The fct_communication_* marts expose both UUID (associated_*_id) and
+legacy (legacy_*_id) anchors for the two-pass bridge.
 
-### Live reconciliation readiness (snapshot 2026-04-04)
-  Calls:   5,943/5,959 company UUID ready — HIGHEST READINESS, probe first
-  Notes:   8,510/11,994 contact UUID ready — probe second
-  Tasks:   25/145 company UUID ready — probe last among supported
-  Meetings: 462/59,043 company UUID ready — DO NOT PROBE until reconciliation improves
+Duplicate prevention:
+  unique_id (icalps_ prefix) prevents duplicate engagement inserts
+  NOT EXISTS prevents duplicate association rows in both passes
+  UNION prevents the same pair appearing in both Pass A and Pass B results
 
-### Duplicate prevention rules
-- unique_id prevents duplicate engagement inserts at Gold upsert time
-- Association tables: NOT EXISTS guard prevents duplicate rows in each pass
-- UNION between Pass A and Pass B prevents the same association appearing twice
-  when a row has both UUID and legacy ID populated
+Meetings deferral rule:
+  Do NOT add Meetings to any SQL, association pattern, or schema_context.yaml
+  entry until: (1) UUID readiness > 50%, (2) type IDs confirmed from portal.
 
-### Anchor completeness rule
-Communication without both company AND person anchors does not survive stg_communication_normalised.
-Zero rows in normalised table lack both anchors (verified in live staging snapshot).
+---
 
-### State machine stage
-All parent entities (Company, Contact, Opportunity) must complete GOLD_UPSERT and STACKSYNC_SYNC
-before the communication ASSOC_VALIDATE stage runs.
+## QUESTIONS — produce executable SQL and dbt models for each
+## Output will be piped to output.txt
 
-runner.py: --assoc-only flag skips to ASSOC_VALIDATE directly when parent entities are already synced.
-runner.py: --enable-post-gold flag enables STACKSYNC_SYNC and ASSOC_VALIDATE after GOLD_UPSERT.
+1. Write the int_communication_classified dbt model SQL.
+   Map Comm_Action → hubspot_activity_class: calls/notes/tasks/meetings.
+   Output columns: icalps_communication_id, comm_action_raw, hubspot_activity_class,
+   plus all original staging columns.
+   Meetings classification: include in the model but mark with a comment
+   noting that Meetings are excluded from the active association bridge.
 
-### Questions to answer in your output
-1. Write the int_communication_classified dbt model SQL. Map Comm_Action values to HubSpot activity class. Output columns: icalps_communication_id, comm_action_raw, hubspot_activity_class, all original columns.
-2. Write the int_communication_reconciled dbt model SQL. Join stg_communication_normalised to hubspot.companies, hubspot.contacts, hubspot.deals via legacy IDs. Output both associated_*_id (UUID) and legacy_*_id (int) columns for each entity.
-3. Write the full two-pass association SQL for Calls → Company (association_type_id=182). Pass A: UUID join. Pass B: legacy fallback. NOT EXISTS guard on both. UNION between passes. Include the unique_id prefix match.
-4. Write the full two-pass association SQL for Notes → Contact (association_type_id=202). Same structure as above but for contacts.
-5. Write the Silver validation SQL for stg_communication_normalised: (a) verify zero rows without both company and person anchors, (b) verify no duplicate icalps_communication_id, (c) verify all unique_id values follow 'icalps_' prefix.
-6. Describe the safe probe sequence for association testing: which comm_type and target to test first, what read-only verification SQL to run before any insert, and what the stop condition is.
+2. Write the int_communication_reconciled dbt model SQL.
+   Join stg_communication_normalised (via legacy IDs) to:
+     hubspot.companies  → associated_company_id (stacksync_record_id_9vpp8v)
+     hubspot.contacts   → associated_contact_id (stacksync_record_id_nd85zc)
+     hubspot.deals      → associated_deal_id    (stacksync_record_id_87b7vd)
+   Output both associated_*_id (UUID) AND legacy_*_id (int) for each entity.
+   NULL on UUID column = record not yet synced (→ Pass B fallback).
+
+3. Write the full two-pass association SQL for Calls → Company (type_id=182).
+   Use staging.fct_communication_calls as the bridge table.
+   Pass A: fct.associated_company_id → hubspot.companies.stacksync_record_id_9vpp8v
+   Pass B: fct.legacy_company_id     → hubspot.companies.icalps_company_id
+   Both passes: NOT EXISTS on hubspot.associations_calls_company
+   UNION between passes. Include unique_id LIKE 'icalps_%' filter.
+
+4. Write the full two-pass association SQL for Notes → Contact (type_id=202).
+   Same structure but for staging.fct_communication_notes and hubspot.contacts.
+
+5. Write the Silver validation SQL for stg_communication_normalised:
+   (a) STOP: zero rows lack both company AND person anchors
+   (b) STOP: no duplicate icalps_communication_id
+   (c) STOP: all unique_id values follow 'icalps_' prefix
+   (d) WARN: fk_legacy_company_id in hubspot.companies
+   (e) WARN: fk_legacy_contact_id in hubspot.contacts
+   Return: check_name, passed, severity, row_count_failing.
+
+6. Write the read-only probe SQL that determines association readiness
+   before any insert. For each comm_type (Calls/Notes/Tasks):
+   Return: comm_type, total_rows, uuid_ready_count, uuid_ready_pct,
+           legacy_only_count, unreconciled_count.
+   Include a comment: "Probe this SQL before any ASSOC_VALIDATE run."
+
+7. State the full runner CLI for:
+   (a) Engagement upsert only (no associations):
+       python -m pipeline.runner --entity communication ...
+   (b) Association-only run (parent entities already synced):
+       python -m pipeline.runner --entity communication --assoc-only ...
+   (c) Full post-gold run with associations:
+       python -m pipeline.runner --entity communication --enable-post-gold ...

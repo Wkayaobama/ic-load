@@ -1,0 +1,122 @@
+entity: Contact
+object_type: contacts
+
+medallion:
+  bronze: staging.stg_contact
+  silver: staging.stg_contact_normalised
+  gold: hubspot.contacts
+  dbt_boundary: false   # Contact does not go through dbt; direct Bronze→Silver→Gold
+
+primary_key:
+  source: Pers_PersonId
+  canonical: icalps_contact_id
+  type: bigint
+
+stacksync:
+  record_id_column: stacksync_record_id_nd85zc
+  record_id_type: bigint
+
+fk_dependencies:
+  - entity: Company
+    violation_policy: REJECT
+    staging_fk: stg_contact_normalised.pers_companyid
+    gold_references: hubspot.companies.icalps_company_id
+    description: "Contact cannot be inserted if its company is not in hubspot.companies"
+
+import_order: 2   # Company must be upserted before Contact
+
+cardinality:
+  - relation: "Contact → Company"
+    type: "N:1"
+    description: "Many contacts belong to one company via Pers_CompanyId"
+  - relation: "Contact → Opportunity"
+    type: "N:M"
+    description: "Contacts can be associated with multiple deals; primary via Oppo_PrimaryPersonId"
+  - relation: "Contact → Communication"
+    type: "1:N"
+    description: "One contact can have many communications via Person_Id FK"
+
+owner_lineage:
+  source_fields:
+    - owner_firstname   # from stg_company_normalised (no owner_email column)
+    - owner_lastname
+  resolution: "name match against HubSpot owner list"
+  severity: WARN   # default — not STOP unless owner_resolution_blocking=true
+  note: "owner_email does NOT exist in stg_contact_normalised; use firstname+lastname only"
+
+associations:
+  direct:
+    - target: Company
+      mechanism: "hubspot.contacts.associatedcompanyid = hubspot.companies.id"
+      staging_fk: stg_contact_normalised.pers_companyid
+      gold_join: "pers_companyid → hubspot.companies.icalps_company_id → hubspot.companies.id"
+      write_path: "UPDATE hubspot.contacts SET associatedcompanyid after STACKSYNC_SYNC"
+      child_filter: "domain ~ '^[0-9]+\\.' (target child companies only)"
+      prerequisite: "Child companies must exist in hubspot.companies (Phase 2 hierarchy complete)"
+  engagement:
+    - comm_type: Calls
+      target: contact
+      association_type_id: 194
+      assoc_table: hubspot.associations_calls_contact
+    - comm_type: Notes
+      target: contact
+      association_type_id: 202
+      assoc_table: hubspot.associations_notes_contact
+    - comm_type: Tasks
+      target: contact
+      association_type_id: 204
+      assoc_table: hubspot.associations_tasks_contact
+
+dedup:
+  thresholds:
+    review_score_min: 0.60
+    block_score_min: 0.80
+  scorer: levenshtein
+  mcp_fallback: optional
+  key_fields:
+    - field: icalps_email
+      weight: 0.65
+      strategy: email    # _norm_email() then exact match (highest signal)
+    - field: pers_firstname + pers_lastname
+      weight: 0.20
+      strategy: levenshtein  # full name levenshtein_ratio
+    - field: pers_companyid
+      weight: 0.10
+      strategy: exact
+    - field: icalps_businessphone or icalps_mobilephone
+      weight: 0.10
+      strategy: digits
+  intra_candidate_checks:
+    - type: duplicate_primary_key
+      field: pers_personid
+    - type: duplicate_identity_signature
+      composite: "email|pers_firstname|pers_lastname|pers_companyid"
+  reference_id_column: icalps_contact_id
+
+silver_validation:
+  stop_checks:
+    - no_duplicate_icalps_contact_id
+    - no_null_pers_personid
+    - fk_pers_companyid_in_hubspot_companies   # REJECT-level FK
+  warn_checks:
+    - owner_name_resolvable
+    - pers_emailaddress_not_null
+    - pers_emailaddress_format_valid
+  owner_resolution_blocking: false
+
+upsert:
+  match_column: icalps_contact_id
+  load_status_filter: ["NEW", "MODIFIED"]
+  conflict_action: DO UPDATE
+  associatedcompanyid_resolution: |
+    (SELECT id::text FROM hubspot.companies
+     WHERE icalps_company_id = stg.pers_companyid::bigint
+     LIMIT 1)
+  exclude_from_upsert:
+    - createdate
+    - stacksync_record_id_nd85zc
+
+pipeline_status:
+  live_push_ready: true
+  blockers: []
+  runner_entity_arg: contact

@@ -1,0 +1,141 @@
+entity: Company
+object_type: companies
+
+medallion:
+  bronze: staging.stg_company
+  silver: staging.stg_company_normalised
+  gold: hubspot.companies
+  dbt_boundary: false   # Company does not go through dbt; direct Bronze→Silver→Gold
+
+primary_key:
+  source: Comp_CompanyId
+  canonical: icalps_company_id
+  type: bigint
+
+stacksync:
+  record_id_column: stacksync_record_id_9vpp8v
+  record_id_type: bigint
+
+fk_dependencies: []   # Company has no upstream dependencies — upsert FIRST
+
+import_order: 1   # Must be first in FK cascade: Company → Contact → Opportunity → Communication
+
+cardinality:
+  - relation: "Company → Contact"
+    type: "1:N"
+    description: "One company has many contacts via Pers_CompanyId FK"
+  - relation: "Company → Opportunity"
+    type: "1:N"
+    description: "One company has many opportunities via Oppo_PrimaryCompanyId FK"
+  - relation: "Company → Communication"
+    type: "1:N"
+    description: "One company has many communications via Company_Id FK"
+  - relation: "Parent Company → Child Companies"
+    type: "1:N"
+    description: "Domain-hack hierarchy: one canonical parent, N children with synthetic domains"
+
+hierarchy:
+  algorithm: domain_hack_sibling_inference
+  module: context.algorithms.company_siblings
+  key_functions:
+    - clean_domain(comp_website)
+    - find_plural_domain_groups(staging_df, gold_df)
+    - select_canonical_parent(group_df, gold_df)   # 3-tier: contact_count DESC, comp_companyid ASC
+    - assign_sibling_indices(group)
+    - flag_cross_group_candidates(plural_groups)   # Levenshtein cross-group review flags
+  parent_selection_tiers:
+    tier_1: "Gold-matched row with highest contact_count"
+    tier_2: "Tie-break: minimum comp_companyid"
+    tier_3: "No Gold match → unresolved, skip group entirely"
+  synthetic_domain_pattern: "{sibling_index}.{clean_domain}"
+  custom_properties:
+    - icalps_real_domain    # actual business domain (not synthetic)
+    - icalps_sibling_index  # 0=parent, 1..N=children
+  association_type_ids:
+    is_subsidiary_of: 269   # child → parent (USER_DEFINED)
+    has_subsidiary: 270     # parent → child (USER_DEFINED)
+  live_run_result:
+    date: "2026-03-11"
+    plural_domain_groups: 151
+    parents: 156
+    children: 293
+    unresolved: 0
+
+associations:
+  direct:
+    - target: Contact
+      mechanism: "Contacts link to parent/child company via hubspot.contacts.associatedcompanyid"
+      staging_fk: stg_contact_normalised.pers_companyid
+      gold_join: hubspot.companies.icalps_company_id → hubspot.companies.id
+      write_path: "UPDATE hubspot.contacts SET associatedcompanyid after STACKSYNC_SYNC"
+      child_filter: "domain ~ '^[0-9]+\\.' (child companies only)"
+    - target: Deal
+      mechanism: "Deals link to child company via oppo_primarycompanyid FK"
+      staging_fk: stg_opportunity_normalised.oppo_primarycompanyid
+      gold_join: hubspot.companies.icalps_company_id → hubspot.companies.id
+      write_path: "create_company_hierarchy.py --assoc-deals flag"
+  engagement:
+    - comm_type: Calls
+      target: company
+      association_type_id: 182
+      assoc_table: hubspot.associations_calls_company
+    - comm_type: Notes
+      target: company
+      association_type_id: 190
+      assoc_table: hubspot.associations_notes_company
+    - comm_type: Tasks
+      target: company
+      association_type_id: 192
+      assoc_table: hubspot.associations_tasks_company
+
+dedup:
+  thresholds:
+    review_score_min: 0.65
+    block_score_min: 0.82
+  scorer: levenshtein   # Use LevenshteinScorer (short name strings)
+  mcp_fallback: optional   # MCPScorer injectable for abbreviation-heavy names
+  key_fields:
+    - field: comp_website
+      weight: 0.45
+      strategy: domain     # _norm_domain() then exact match
+    - field: comp_name
+      weight: 0.35
+      strategy: levenshtein  # _company_root() then levenshtein_ratio
+    - field: address_city
+      weight: 0.10
+      strategy: exact
+    - field: icalps_companyphone
+      weight: 0.10
+      strategy: digits
+  intra_candidate_checks:
+    - type: duplicate_primary_key
+      field: comp_companyid
+    - type: duplicate_identity_signature
+      composite: "comp_website_domain|comp_name_root"
+  reference_id_column: icalps_company_id   # in benchmark export CSV
+
+silver_validation:
+  stop_checks:
+    - no_duplicate_icalps_company_id
+    - no_null_comp_companyid
+  warn_checks:
+    - owner_name_resolvable
+    - comp_website_parseable
+  owner_resolution_blocking: false   # WARN only unless overridden in thresholds
+
+upsert:
+  match_column: icalps_company_id
+  load_status_filter: ["NEW", "MODIFIED"]
+  conflict_action: DO UPDATE
+  exclude_from_upsert:
+    - createdate    # set by HubSpot automatically
+    - stacksync_record_id_9vpp8v   # populated by StackSync, never overwrite
+
+pipeline_status:
+  live_push_ready: true
+  blockers: []
+  runner_entity_arg: company
+  post_gold_steps:
+    - create_company_hierarchy.py (domain-hack children)
+    - create_company_hierarchy.py --assoc-contacts
+    - create_company_hierarchy.py --assoc-deals

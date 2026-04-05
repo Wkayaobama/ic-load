@@ -1,0 +1,164 @@
+entity: Case
+object_type: tickets
+
+medallion:
+  bronze: staging.stg_cases             # raw/legacy preservation (stg_cases, not stg_case)
+  silver: staging.stg_case              # ticket-shaped cleaned surface (58 rows)
+  gold: hubspot.tickets                 # NOT YET LIVE — pipeline_status.live_push_ready=false
+  dbt_boundary: false
+
+primary_key:
+  source: Case_CaseId
+  canonical: icalps_case_id             # to be confirmed — not yet verified in hubspot.tickets
+  type: bigint
+
+stacksync:
+  record_id_column: TBD                 # not yet confirmed from live HubSpot portal
+  note: "stacksync_record_id_* column for tickets must be confirmed before any Gold write"
+
+fk_dependencies:
+  - entity: Company
+    violation_policy: WARN   # nullable FK — case can exist without primary company
+    staging_fk: stg_case.icalps_company_id
+    gold_references: hubspot.companies.icalps_company_id
+  - entity: Contact
+    violation_policy: WARN
+    staging_fk: stg_case.icalps_contact_id
+    gold_references: hubspot.contacts.icalps_contact_id
+
+import_order: 5   # after Company, Contact, Opportunity, Communication
+
+cardinality:
+  - relation: "Case → Company"
+    type: "N:1"
+    description: "Many cases belong to one primary company via Case_PrimaryCompanyId"
+  - relation: "Case → Contact"
+    type: "N:1"
+    description: "Many cases belong to one primary contact via Case_PrimaryPersonId"
+
+entity_fields:
+  core:
+    - Case_CaseId            # PK
+    - Case_PrimaryCompanyId  # FK → Company
+    - Case_PrimaryPersonId   # FK → Contact
+    - Case_AssignedUserId    # FK → User/Owner
+    - Case_Status
+    - Case_Stage
+    - Case_Priority
+    - Case_Description       # long-form text — UTF-8 cleaning required, preserve line breaks
+    - Case_Opened            # datetime
+    - Case_Closed            # datetime
+  denormalized_from_joins:
+    - Company_Name           # from Company table
+    - Company_WebSite        # from Company table
+    - Person_FirstName       # from Person table
+    - Person_LastName        # from Person table
+    - Person_EmailAddress    # from vEmailCompanyAndPerson view
+
+staging_assessment:
+  source_rows: 58
+  shaped_columns: 22
+  exact_match_rate: "43/58 rows (74.1%)"
+  residual_mismatches_in:
+    - createdate             # serialization format differences
+    - icalps_case_stage      # stage label normalization not yet implemented
+    - small number of contact and text fields
+  assessment_files:
+    - artifacts/assessment/stg_case_from_bronze.csv
+    - artifacts/assessment/stg_case_from_bronze_assessment.json
+
+stage_mapping:
+  status: NOT_IMPLEMENTED
+  non_negotiable: true   # same constraint as deal_stage_mapper
+  known_source_values: [Open, Closed, In Progress, Pending, Escalated]
+  note: "Exact HubSpot ticket stage IDs must be confirmed from live portal before any mapping"
+  target_module: context.algorithms.case_stage_mapper   # DOES NOT EXIST YET
+
+associations:
+  direct: []   # no confirmed direct associations yet
+  engagement:
+    - comm_type: Ticket
+      target: company
+      association_type_id: TBD   # must confirm from HubSpot portal
+      assoc_table: hubspot.associations_tickets_company
+    - comm_type: Ticket
+      target: contact
+      association_type_id: TBD
+      assoc_table: hubspot.associations_tickets_contact
+    - comm_type: Ticket
+      target: deal
+      association_type_id: TBD
+      assoc_table: hubspot.associations_tickets_deal
+  note: "NO association bridge patterns should be added until type IDs are confirmed"
+
+text_normalization:
+  Case_Description: |
+    Long-form text field. Apply UTF-8/mojibake cleaning.
+    Preserve meaningful line breaks. Do not strip all whitespace.
+    Strip only unsafe control characters.
+
+dedup:
+  thresholds:
+    review_score_min: 0.65
+    block_score_min: 0.82
+  scorer: levenshtein
+  mcp_fallback: optional
+  key_fields:
+    - field: subject   # icalps_case_stage → subject in stg_case shape
+      weight: 0.45
+      strategy: levenshtein
+    - field: icalps_company_id
+      weight: 0.20
+      strategy: exact
+    - field: icalps_contact_email
+      weight: 0.15
+      strategy: email
+    - field: icalps_case_stage
+      weight: 0.10
+      strategy: exact
+    - field: icalps_case_status
+      weight: 0.05
+      strategy: exact
+    - field: hs_ticket_priority
+      weight: 0.05
+      strategy: exact
+  intra_candidate_checks:
+    - type: duplicate_primary_key
+      field: icalps_ticket_id   # column name in benchmark export
+    - type: duplicate_identity_signature
+      composite: "subject|icalps_company_id"
+  reference_id_column: IcAlps_TicketID   # in benchmark export CSV
+
+silver_validation:
+  stop_checks:
+    - no_duplicate_icalps_case_id
+    - no_null_case_caseid
+  warn_checks:
+    - fk_case_primarycompanyid_in_hubspot_companies
+    - fk_case_primarypersonid_in_hubspot_contacts
+    - icalps_case_stage_has_valid_mapping   # blocked until stage_mapping is implemented
+    - case_opened_parseable_as_datetime
+    - createdate_serialization_consistent   # known residual from assessment
+
+upsert:
+  match_column: icalps_case_id
+  load_status_filter: ["NEW", "MODIFIED"]
+  conflict_action: DO UPDATE
+  exclude_from_upsert:
+    - createdate
+    - stacksync_record_id_TBD   # confirm column name before adding
+
+pipeline_status:
+  live_push_ready: false
+  blockers:
+    - "icalps_case_stage mapping is not implemented (case_stage_mapper module missing)"
+    - "HubSpot Ticket association type IDs not yet confirmed from portal"
+    - "staging assessment match rate is 74.1% — must reach >95% before live push"
+    - "stacksync_record_id_* column name for tickets not confirmed"
+  runner_entity_arg: case
+  promotion_checklist:
+    - "Implement context/algorithms/case_stage_mapper.py with confirmed stage IDs"
+    - "Confirm ticket → company/contact/deal association type IDs from HubSpot portal"
+    - "Re-run Bronze shaping probe to push match rate above 95%"
+    - "Confirm icalps_case_id is the correct canonical key in hubspot.tickets"
+    - "Add 'case' to runner.py ENTITIES config"

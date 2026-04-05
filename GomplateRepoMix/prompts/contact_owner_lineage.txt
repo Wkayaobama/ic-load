@@ -1,58 +1,101 @@
-You are an IC'ALPS pipeline engineer working on the Silver normalization and Gold upsert layers of a StackSync-mirrored PostgreSQL CRM database.
+## ENTITY CARD LOAD — STATE BEFORE RENDERING
+## Usage: claude -p < contact_owner_lineage.txt > owner_lineage.txt
 
-Your task is to produce a complete, executable implementation plan for the Contact entity model including company association, owner lineage, and duplicate prevention. The output of this prompt can be piped directly: claude -p < contact_owner_lineage.txt > owner_lineage.txt
+Entity card: context/cards/contact.yaml
+Load this card first. All decisions in this prompt are governed by the card.
 
-## Entity Model: Contact (Person)
+Medallion position:
+  Bronze  → staging.stg_contact
+  Silver  → staging.stg_contact_normalised
+  Gold    → hubspot.contacts
+  dbt     → NOT in dbt boundary (direct Bronze→Silver→Gold)
 
-### Source → Staging path
-- Bronze table: staging.stg_contact (Pers_PersonId PK)
-- Silver normalized: staging.stg_contact_normalised
-- Gold table: hubspot.contacts
-- Match key: icalps_contact_id = Pers_PersonId
-- StackSync resolution column: stacksync_record_id_nd85zc
+Primary key:  Pers_PersonId  →  icalps_contact_id (bigint)
+StackSync resolution column:  stacksync_record_id_nd85zc
+FK dependencies:
+  Company (REJECT) → stg_contact_normalised.pers_companyid
+                   → hubspot.companies.icalps_company_id
+Import order: 2 (Company must be upserted FIRST)
 
-### FK dependencies (import order)
-Company must be upserted BEFORE Contact. The FK chain is:
-  stg_contact_normalised.pers_companyid → hubspot.companies.icalps_company_id
-Violation policy: REJECT (contact cannot be inserted if company is not yet in hubspot.companies)
+Cardinality:  Contact N:1 Company, N:M Opportunity, 1:N Communication
 
-### Owner lineage
-- stg_company_normalised exposes: owner_firstname, owner_lastname (NO owner_email column)
-- owner identity is resolved by name match against HubSpot owner list
-- owner resolution is a WARN-level check, not a STOP-level check
-  unless owner_resolution_blocking is set to true in thresholds
-- owner_warn_count is tracked in ctx.metadata["validation"]["owner_warn_count"]
+Owner lineage:
+  Fields available: owner_firstname, owner_lastname (NO owner_email)
+  Resolution: name match against HubSpot owner list
+  Severity: WARN (not STOP unless owner_resolution_blocking=true)
 
-### Company association
-- hubspot.contacts.associatedcompanyid must be set to hubspot.companies.id
-- Resolution: stg_contact_normalised.pers_companyid → hubspot.companies.icalps_company_id → hubspot.companies.id
-- This association is propagated via StackSync outgoing sync after the UPDATE
-- Apply domain filter WHERE hubspot.companies.domain ~ '^[0-9]+\.' to target child companies only
+Dedup scorer:  Levenshtein (email is highest signal at weight 0.65)
+Dedup thresholds:  review ≥ 0.60, block ≥ 0.80
 
-### Duplicate prevention rules
-- _load_status watermark: only NEW or MODIFIED rows are upserted
-- INSERT ... ON CONFLICT (icalps_contact_id) DO UPDATE
-- Before each upsert pass: verify no duplicate icalps_contact_id in stg_contact_normalised
-- The dedup rule: if multiple stg_contact rows share the same Pers_PersonId, keep only the row with the most non-null fields (prefer_record_with_most_metadata policy from business_rules.yaml)
+Pipeline status:  live_push_ready=true
+Runner arg:  --entity contact
 
-### Silver validation checks
-- STOP: duplicate icalps_contact_id in normalized table
-- STOP: null Pers_PersonId
-- STOP: pers_companyid references a comp_companyid not in hubspot.companies (FK violation = REJECT)
-- WARN: owner name cannot be resolved to a HubSpot owner
-- WARN: pers_emailaddress null or malformed
+---
 
-### dbt boundary
-- Contacts feed into int_communication_reconciled via legacy_contact_id
-- fct_communication_* marts expose associated_contact_id (UUID) and legacy_contact_id (int fallback)
-- dbt must run AFTER Contact Gold upsert so that icalps_contact_id is available for reconciliation
+## CONTEXT: You are an IC'ALPS pipeline engineer
 
-### State machine stage
-BRONZE_EXPORT → SILVER_NORMALISE → SILVER_VALIDATE → DBT_BUILD → GOLD_VALIDATE → GOLD_UPSERT → STACKSYNC_SYNC → ASSOC_VALIDATE
+You are working on the Silver normalization and Gold upsert layers of a
+StackSync-mirrored PostgreSQL CRM database. The entity card above is the
+canonical state of this entity in the medallion.
 
-### Questions to answer in your output
-1. Write the exact PostgreSQL upsert SQL for hubspot.contacts. Conflict key: icalps_contact_id. Include _load_status filter. Apply UTF-8 cleaning on firstname and lastname. Map pers_companyid to associatedcompanyid via hubspot.companies.id subquery.
-2. Write the Silver dedup SQL that identifies duplicate icalps_contact_id rows and selects the canonical row using the prefer_record_with_most_metadata rule (count non-null columns, keep max, tie-break on Pers_PersonId ASC).
-3. Write the Silver validation SQL for all STOP checks listed above. Return check_name, passed (bool), severity, and row_count_failing.
-4. Write the SQL that updates hubspot.contacts.associatedcompanyid after STACKSYNC_SYNC, using NOT EXISTS to prevent re-updating already-associated contacts. Apply child-only filter.
-5. Write the exact runner CLI invocation for a full Contact run including owner resolution in warn mode (not blocking). Specify which flags from pipeline/runner.py to use.
+Dedup key fields and weights (from card):
+  icalps_email (email strategy)    → weight 0.65  ← highest signal
+  full name (levenshtein)          → weight 0.20
+  pers_companyid (exact)           → weight 0.10
+  phone digits (digits)            → weight 0.10
+
+Intra-candidate dedup checks:
+  duplicate_primary_key on pers_personid
+  duplicate_identity_signature: "email|pers_firstname|pers_lastname|pers_companyid"
+
+Company association timing:
+  After STACKSYNC_SYNC — child companies must already exist in hubspot.companies
+  Filter: hubspot.companies.domain ~ '^[0-9]+\.' (children only)
+  NOT EXISTS guard prevents re-updating already-associated contacts
+
+Silver validation STOP checks:
+  no_duplicate_icalps_contact_id
+  no_null_pers_personid
+  fk_pers_companyid_in_hubspot_companies (REJECT)
+
+---
+
+## QUESTIONS — produce executable SQL for each
+## Output will be piped to owner_lineage.txt
+
+1. Write the Gold upsert SQL for hubspot.contacts.
+   - Conflict key: icalps_contact_id
+   - Filter: _load_status IN ('NEW', 'MODIFIED')
+   - Resolve pers_companyid to hubspot.companies.id via subquery for associatedcompanyid
+   - Apply UTF-8 cleaning on firstname, lastname
+   - Exclude createdate and stacksync_record_id_nd85zc from UPDATE SET
+   - Source: staging.stg_contact_normalised
+
+2. Write the Silver dedup SQL for contacts using prefer_record_with_most_metadata.
+   Count non-null columns per pers_personid group, keep max, tie-break ASC.
+   Output: canonical row per pers_personid.
+
+3. Write the Silver validation SQL for all STOP checks.
+   Return: check_name, passed (bool), severity, row_count_failing.
+   Include the FK REJECT check that verifies pers_companyid is in hubspot.companies.
+
+4. Write the owner name resolution diagnostic SQL.
+   Join stg_contact_normalised.owner_firstname + owner_lastname against a
+   hypothetical owner reference table. Return:
+   owner_name, found_in_reference (bool), contact_count.
+   Include a comment noting that owner_email does NOT exist in stg_contact_normalised.
+
+5. Write the SQL that updates hubspot.contacts.associatedcompanyid after STACKSYNC_SYNC.
+   Join via pers_companyid → hubspot.companies.icalps_company_id → id.
+   Apply child-only filter (domain ~ '^[0-9]+\.').
+   Use NOT EXISTS to prevent re-updating contacts already correctly associated.
+
+6. Write the Levenshtein duplicate detection SQL for contacts.
+   Compare full name (firstname + lastname) against benchmark export using
+   PostgreSQL's levenshtein() function or pg_trgm similarity().
+   Flag pairs where similarity >= 0.60 AND same company (pers_companyid match).
+   These are review candidates, not auto-blocks.
+
+7. State the exact runner CLI invocation for a Contact run with owner resolution
+   in warn (non-blocking) mode:
+     python -m pipeline.runner --entity contact ...

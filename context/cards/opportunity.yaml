@@ -1,0 +1,149 @@
+entity: Opportunity
+object_type: deals
+
+medallion:
+  bronze: staging.stg_opportunity
+  silver: staging.stg_opportunity_normalised
+  gold: hubspot.deals
+  dbt_boundary: false   # Opportunity does not go through dbt; direct Bronze→Silver→Gold
+
+primary_key:
+  source: Oppo_OpportunityId
+  canonical: icalps_deal_id
+  type: bigint
+
+stacksync:
+  record_id_column: stacksync_record_id_87b7vd
+  record_id_type: bigint
+
+fk_dependencies:
+  - entity: Company
+    violation_policy: REJECT
+    staging_fk: stg_opportunity_normalised.oppo_primarycompanyid
+    gold_references: hubspot.companies.icalps_company_id
+    description: "Deal cannot be inserted if its primary company is not in hubspot.companies"
+  - entity: Contact
+    violation_policy: WARN
+    staging_fk: stg_opportunity_normalised.oppo_primarypersonid
+    gold_references: hubspot.contacts.icalps_contact_id
+    description: "Deal warns but continues if its primary contact is not yet synced"
+
+import_order: 3   # Company AND Contact must be upserted before Opportunity
+
+cardinality:
+  - relation: "Opportunity → Company"
+    type: "N:1"
+    description: "Many deals belong to one primary company via Oppo_PrimaryCompanyId"
+  - relation: "Opportunity → Contact"
+    type: "N:1"
+    description: "Many deals belong to one primary contact via Oppo_PrimaryPersonId"
+  - relation: "Opportunity → Communication"
+    type: "1:N"
+    description: "One deal can have many communications via Comm_OpportunityId"
+
+stage_mapping:
+  non_negotiable: true
+  module: context.algorithms.deal_stage_mapper
+  key_function: map_deal_stage(pipeline, stage, outcome) → DealStageResult
+  supported_pipelines:
+    - name: Hardware
+      pipeline_id: 766126206
+  stage_ids:
+    Identified:   85103752
+    Qualified:    85103753
+    Design In:    85103754
+    Design Win:   85103756
+    Closed Won:   85103757
+    Closed Lost:  85103758
+  outcome_to_hubspot_stage:
+    No-go:      Closed Lost
+    Abandonnée: Closed Lost
+    Perdue:     Closed Lost
+    Gagnée:     Closed Won
+    En cours:   depends on stage (Identified/Qualified/Design In/Design Win)
+  normalization:
+    accepts_french: true
+    accepts_english: true
+  when_to_run: SILVER_NORMALISE stage (before DBT_BUILD)
+  error_policy: "raise ValueError — never silently produce wrong stage ID"
+
+computed_columns:
+  weighted_forecast:
+    formula: "icalps_forecast::numeric * (icalps_certainty::numeric / 100.0)"
+    when: included in Gold upsert INSERT payload
+  net_amount:
+    formula: "icalps_forecast::numeric - icalps_cost::numeric"
+  net_weighted_amount:
+    formula: "(icalps_forecast::numeric - icalps_cost::numeric) * (icalps_certainty::numeric / 100.0)"
+
+associations:
+  direct:
+    - target: Company
+      staging_fk: oppo_primarycompanyid
+      write_path: "create_company_hierarchy.py --assoc-deals"
+    - target: Contact
+      staging_fk: oppo_primarypersonid
+      write_path: "Silver FK validation + Gold upsert or post-StackSync association"
+  engagement:
+    - comm_type: Notes
+      target: deal
+      association_type_id: 214
+      assoc_table: hubspot.associations_notes_deal
+      note: "Only comm_type with a deal association target — calls and tasks do not link to deals"
+
+dedup:
+  thresholds:
+    review_score_min: 0.62
+    block_score_min: 0.78
+  scorer: levenshtein
+  mcp_fallback: optional
+  key_fields:
+    - field: oppo_description
+      weight: 0.45
+      strategy: levenshtein   # deal name — short string, Levenshtein is precise
+    - field: oppo_primarycompanyid
+      weight: 0.20
+      strategy: exact
+    - field: oppo_primarypersonid
+      weight: 0.10
+      strategy: exact
+    - field: hubspot_pipeline_id
+      weight: 0.10
+      strategy: exact
+    - field: hubspot_dealstage_name
+      weight: 0.05
+      strategy: exact
+    - field: icalps_forecast
+      weight: 0.10
+      strategy: digits
+  intra_candidate_checks:
+    - type: duplicate_primary_key
+      field: oppo_opportunityid
+    - type: duplicate_identity_signature
+      composite: "oppo_description|oppo_primarycompanyid"
+  reference_id_column: icalps_deal_id
+
+silver_validation:
+  stop_checks:
+    - no_duplicate_icalps_deal_id
+    - no_null_oppo_opportunityid
+    - fk_oppo_primarycompanyid_in_hubspot_companies
+  warn_checks:
+    - fk_oppo_primarypersonid_in_hubspot_contacts
+    - icalps_certainty_range_0_100
+    - icalps_forecast_not_negative
+    - stage_outcome_has_valid_mapping   # checks deal_stage_mapper can resolve the combination
+
+upsert:
+  match_column: icalps_deal_id
+  load_status_filter: ["NEW", "MODIFIED"]
+  conflict_action: DO UPDATE
+  computed_in_payload: true   # weighted_forecast, net_amount, net_weighted_amount
+  exclude_from_upsert:
+    - createdate
+    - stacksync_record_id_87b7vd
+
+pipeline_status:
+  live_push_ready: true
+  blockers: []
+  runner_entity_arg: opportunity

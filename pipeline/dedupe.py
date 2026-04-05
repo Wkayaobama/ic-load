@@ -4,15 +4,20 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from context.algorithms.levenshtein import get_scorer
 from context.config import ARTIFACTS_DIR, load_business_rules, load_entity_translation_contract
 from context.db import get_connection
 from pipeline.text_normalization import clean_text_utf8
+
+# SequenceMatcher is kept as a fallback for long free-text fields only.
+# Short identity strings (names, domains, emails) now use Levenshtein via get_scorer().
+# To swap in an MCP scorer: call context.algorithms.levenshtein.set_scorer(MCPScorer(call_fn))
+# before running the guardrail. The scorer is module-level and injectable at startup.
 
 _COMPANY_STOPWORDS = {
     "ag",
@@ -89,11 +94,18 @@ def _company_root(value: Any) -> str:
 
 
 def _similarity(left: Any, right: Any) -> float:
+    """Levenshtein-based similarity for short identity strings.
+
+    Uses the module-level scorer from context.algorithms.levenshtein.
+    Swap scorer via set_scorer(MCPScorer(call_fn)) for semantic matching.
+    Suitable for: company names, contact names, domains, email addresses.
+    For long free-text (notes, descriptions): scorer falls back gracefully.
+    """
     lhs = _norm_text(left)
     rhs = _norm_text(right)
     if not lhs or not rhs:
         return 0.0
-    return SequenceMatcher(None, lhs, rhs).ratio()
+    return get_scorer().score(lhs, rhs)
 
 
 def _coerce_frame(frame: pd.DataFrame) -> pd.DataFrame:
