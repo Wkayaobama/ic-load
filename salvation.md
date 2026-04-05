@@ -189,17 +189,40 @@ The must-have runtime core is:
 - added the reusable raw-CSV-to-staging transformation snippet
 - confirmed the clean repo already exposes CLI-style orchestration via `runner`, `probe`, `live_smoke`, and the raw-to-staging snippet
 - kept all new validation and assessment work on the safe side of `hubspot.*`
+- **association probe completion (branch w/assoc-probe-completion)**:
+  - fixed `association_bridge.sql.tmpl` from single-pass to two-pass (M1)
+  - removed hardcoded PostgreSQL credentials from `unflatten_hierarchy.py` (M2)
+  - documented `../../` path dependency in `repomix.config.json` (M3)
+  - documented `silver.py` legacy path dependency as Codespaces blocker (M4)
+  - added Meetings deferral note with explicit conditions to `schema_context.yaml` (M5)
+  - completed `ASSOCIATION_PROBE_TECHNICAL_STATE.md` with full algorithm descriptions,
+    StackSync timing model, complete association map, and missing-file flags
+  - added `GomplateRepoMix/render_associations.sh` concrete execution script
+  - added entity-level prompt files for Silver pipeline reproducibility fallback
+
+### Known Blockers Before Codespaces Execution
+
+These must be resolved before the clean runner can execute in a fresh Codespaces:
+
+1. `pipeline/silver.py` loads `silver_normalise.py` and `validate_silver.py` from
+   `PROJECT_ROOT.parent / "ic_load_pipeline" / "python-ignorethis"` (M4)
+   — copy or rewrite both files inside `ic-load`
+2. `deal_stage_mapper.py` not in `ic-load` — runner metadata will not load stage rules
+3. `unflatten_hierarchy.py` not in `ic-load` — repomix bundle misses it in Codespaces
+4. `ic_load_pipeline/dbt_communication/` not in `ic-load/dbt/` — dbt step fails
 
 ### Next Approved Iteration
 
-Start the **second extraction pass** around the proven salvage spine.
+Resolve the Codespaces execution blockers (M3 and M4):
 
 Priority order:
-- replace remaining legacy Silver wrappers with local extracted modules where safe
-- decide whether sibling/parent company association handling belongs in the supported core
-- wire optional live DB/dbt hooks behind the existing thin runtime boundary
-- tighten Repomix bundle generation around the rendered SQL outputs
-- push the local salvage history to the GitHub remote and verify Codespaces boot there
+- copy `silver_normalise.py`, `validate_silver.py`, `deal_stage_mapper.py` into
+  `ic-load/context/algorithms/` and update `silver.py` to use repo-local paths
+- copy `unflatten_hierarchy.py` into `ic-load/context/algorithms/`
+- decide whether the full `dbt_communication/` project belongs inside `ic-load/dbt/`
+  or whether it stays as an external path requirement in the devcontainer
+- merge `w/assoc-probe-completion` to `main` after the above is verified
+- push to GitHub remote and verify Codespaces boot end-to-end
 
 ## Resume Instruction
 

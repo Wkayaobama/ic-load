@@ -1,0 +1,77 @@
+You are an IC'ALPS pipeline engineer working on the Silver normalization, deal stage mapping, and Gold upsert layers of a StackSync-mirrored PostgreSQL CRM database.
+
+Your task is to produce a complete, executable implementation plan for the Opportunity (Deal) entity model including computed columns, stage mapping, company/contact association, and duplicate prevention. The output of this prompt can be piped directly: claude -p < opportunity_association.txt > opportunity_association.txt
+
+## Entity Model: Opportunity (Deal)
+
+### Source → Staging path
+- Bronze table: staging.stg_opportunity (Oppo_OpportunityId PK)
+- Silver normalized: staging.stg_opportunity_normalised
+- Gold table: hubspot.deals
+- Match key: icalps_deal_id = Oppo_OpportunityId
+- StackSync resolution column: stacksync_record_id_87b7vd
+
+### FK dependencies (import order)
+Both Company AND Contact must be upserted BEFORE Opportunity.
+  stg_opportunity_normalised.oppo_primarycompanyid → hubspot.companies.icalps_company_id  (REJECT)
+  stg_opportunity_normalised.oppo_primarypersonid  → hubspot.contacts.icalps_contact_id   (WARN)
+
+### Deal stage mapping (NON-NEGOTIABLE)
+Plain text stage labels are NOT valid Gold write targets. The deal_stage_mapper.py
+resolves pipeline + stage + outcome → HubSpot-native pipeline_id and stage_id.
+
+Supported hardware pipeline_id: 766126206
+
+Stage normalization:
+  IC'ALPS stages (French/English) → canonical HubSpot stage IDs
+  01-Identification, 02-Qualifiée, 03-Evaluation technique,
+  04-Construction propositions, 05-Négociations
+
+Outcome normalization (double granularity):
+  No-go       → Closed Lost
+  Abandonnée  → Closed Lost
+  Perdue      → Closed Lost
+  Gagnée      → Closed Won
+
+Rule: IF pipeline = "Hardware" AND stage = "01 - Identification" AND outcome = "Perdue"
+      THEN hubspot_stage = "closedlost", hubspot_pipeline = 766126206
+
+### Computed columns (added during Silver → Gold transform)
+  weighted_forecast    = icalps_forecast::numeric * (icalps_certainty::numeric / 100.0)
+  net_amount           = icalps_forecast::numeric - icalps_cost::numeric
+  net_weighted_amount  = (icalps_forecast::numeric - icalps_cost::numeric) * (icalps_certainty::numeric / 100.0)
+
+These are computed BEFORE the Gold upsert and included in the INSERT/UPDATE payload.
+
+### Duplicate prevention rules
+- _load_status watermark: only NEW or MODIFIED rows
+- INSERT ... ON CONFLICT (icalps_deal_id) DO UPDATE
+- dedup rule: if multiple stg rows share Oppo_OpportunityId, keep the row with the most non-null fields
+- Association dedup: hubspot.deals linked to companies and contacts via NOT EXISTS guards
+
+### Silver validation checks
+- STOP: duplicate icalps_deal_id in normalized table
+- STOP: null Oppo_OpportunityId
+- STOP: oppo_primarycompanyid references comp_companyid not in hubspot.companies (FK = REJECT)
+- WARN: oppo_primarypersonid references Pers_PersonId not in hubspot.contacts (FK = WARN)
+- WARN: icalps_certainty outside 0–100 range
+- WARN: icalps_forecast is null or negative
+
+### Association patterns for Deal
+  Notes → Deal: association_type_id = 214
+                hubspot.associations_notes_deal
+                Two-pass: UUID (associated_deal_id → stacksync_record_id_87b7vd)
+                         + legacy fallback (legacy_deal_id → icalps_deal_id)
+
+### State machine stage
+BRONZE_EXPORT → SILVER_NORMALISE → SILVER_VALIDATE → DBT_BUILD → GOLD_VALIDATE → GOLD_UPSERT → STACKSYNC_SYNC → ASSOC_VALIDATE
+
+deal_stage_mapper must run DURING SILVER_NORMALISE to produce normalized stage fields before DBT_BUILD.
+
+### Questions to answer in your output
+1. Write the exact PostgreSQL upsert SQL for hubspot.deals. Conflict key: icalps_deal_id. Include computed columns in the INSERT payload. Resolve oppo_primarycompanyid to hubspot.companies.id. Apply _load_status filter.
+2. Write the deal stage mapping logic as a PostgreSQL CASE expression (or SQL function) that accepts icalps_pipeline, icalps_stage, and icalps_outcome and returns hubspot_pipeline_id and hubspot_stage_id. Cover all supported IC'ALPS outcomes.
+3. Write the Silver dedup SQL for Opportunity using the prefer_record_with_most_metadata rule.
+4. Write the Silver validation SQL for all STOP and WARN checks listed above. Return check_name, passed, severity, row_count_failing.
+5. Write the two-pass association SQL for Notes → Deal (association_type_id=214). Pass A: UUID join via stacksync_record_id_87b7vd. Pass B: legacy_deal_id fallback. Both passes use NOT EXISTS. UNION between passes.
+6. Write the exact runner CLI invocation for a full Opportunity run including stage mapping and notes association.

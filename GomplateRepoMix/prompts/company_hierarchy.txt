@@ -1,0 +1,53 @@
+You are an IC'ALPS pipeline engineer working on the Silver normalization and Gold upsert layers of a StackSync-mirrored PostgreSQL CRM database.
+
+Your task is to produce a complete, executable implementation plan for the Company entity model including parent-child hierarchy, sibling inference, and all downstream associations. Avoid all duplication in staging and association tables.
+
+## Entity Model: Company
+
+### Source → Staging path
+- Bronze table: staging.stg_company (Comp_CompanyId PK)
+- Silver normalized: staging.stg_company_normalised
+- Gold table: hubspot.companies
+- Match key: icalps_company_id = Comp_CompanyId
+- StackSync resolution column: stacksync_record_id_9vpp8v
+
+### Hierarchy Algorithm (domain trick)
+Groups are formed by cleaned domain. Only groups with COUNT > 1 are processed.
+
+Parent selection (deterministic, 3-tier):
+1. Among Gold-matched rows: pick the one with the highest contact_count
+2. Tie-break: minimum comp_companyid
+3. No Gold-matched rows in group → mark unresolved, skip entirely
+
+Child assignment:
+- Remaining rows sorted by comp_companyid ASC
+- icalps_sibling_index: parent=0, children=1..N
+- domain assigned as "{N}.{clean_domain}" for children
+- icalps_real_domain = actual business domain (custom property)
+
+HubSpot write sequence:
+1. batch/create child company records
+2. Register COMPANY-COMPANY USER_DEFINED association typeId 269/270
+   ("Is subsidiary of" / "Has subsidiary")
+   Body: [{"associationCategory":"USER_DEFINED","associationTypeId":269}]
+   typeId in body NOT in URL (v4 API requirement)
+3. --assoc-contacts: link contacts to child via stg_contact_normalised.pers_companyid FK
+4. --assoc-deals: link deals to child via stg_opportunity_normalised.oppo_primarycompanyid FK
+
+### Duplicate prevention rules
+- `_load_status` watermark on staging.stg_company: only rows with status NEW or MODIFIED are upserted
+- Gold upsert uses INSERT ... ON CONFLICT (icalps_company_id) DO UPDATE
+- clear_subsidiary_associations() must clear stale USER_DEFINED 269/270 before re-association on each run
+- Contact → child company link: filter domain ~ '^[0-9]+\.' to target children only
+
+### State machine stage
+- BRONZE_EXPORT → SILVER_NORMALISE → SILVER_VALIDATE → DBT_BUILD → GOLD_VALIDATE → GOLD_UPSERT → STACKSYNC_SYNC → ASSOC_VALIDATE
+- create_company_hierarchy.py runs AFTER STACKSYNC_SYNC (child companies need hubspot.companies to be populated)
+- --assoc-contacts and --assoc-deals run AFTER child companies are confirmed in hubspot.companies
+
+### Questions to answer in your output
+1. Write the exact PostgreSQL upsert SQL for hubspot.companies using icalps_company_id as conflict key. Include only NEW and MODIFIED rows. Apply UTF-8 cleaning on comp_name and comp_website before insert.
+2. Write the Silver validation SQL that checks: (a) no duplicate icalps_company_id, (b) no null comp_companyid, (c) no orphaned icalps_ownerid_raw.
+3. Write the SQL that identifies plural-domain groups and their candidate parents (Gold-matched, highest contact_count, min comp_companyid tie-break). Include the unresolved group exclusion filter.
+4. Write the association SQL that links contacts to child companies via pers_companyid, using NOT EXISTS to prevent duplicates. Apply the domain ~ '^[0-9]+\.' child filter.
+5. Describe the exact runner CLI invocation sequence for a full Company + hierarchy + contact association run, using the flags in pipeline/runner.py.

@@ -114,6 +114,13 @@ association_type_ids:
 
 association_bridge:
   idempotency_guard: "NOT EXISTS"
+  # Meetings are explicitly deferred. Reasons:
+  #   1. 58,581 / 59,043 rows (99.2%) have no UUID anchor in live staging (snapshot 2026-04-04)
+  #   2. Association type IDs for meetings_company and meetings_contact are not yet confirmed
+  #      from the live HubSpot portal — do NOT add meetings here until confirmed
+  #   3. Legacy fallback at this scale without UUID readiness risks mass mis-association
+  # Prerequisite for adding Meetings: reconciliation quality must exceed 50% UUID coverage
+  # and type IDs must be confirmed. See ASSOCIATION_PROBE_TECHNICAL_STATE.md.
   supported_patterns:
     - comm_type: "Calls"
       targets: ["company", "contact"]
@@ -121,6 +128,7 @@ association_bridge:
       targets: ["company", "contact", "deal"]
     - comm_type: "Tasks"
       targets: ["company", "contact"]
+    # Meetings: DEFERRED — see comment above
 
 stage_mappings:
   validation_gate: "SILVER_VALIDATE"

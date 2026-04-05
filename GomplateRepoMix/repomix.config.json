@@ -1,5 +1,6 @@
 {
   "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "_workspace_note": "IMPORTANT: paths prefixed with '../../' are relative to the IC_Load workspace root (the parent of ic-load). They resolve correctly when ic-load is checked out inside the full IC_Load workspace. They will NOT resolve in a standalone Codespaces clone of ic-load alone. Long-term fix: promote non-negotiable algorithm files into ic-load/context/algorithms/ (see M3 in ASSOCIATION_PROBE_TECHNICAL_STATE.md).",
   "output": {
     "filePath": "repomix_bundle/icalps_pipeline_context.xml",
     "style": "xml",
@@ -15,6 +16,8 @@
     "../docs/CONTEXT_PACKAGING_PROCESS.md",
     "../docs/AD_HOC_TRANSFORM_CONTEXT.md",
     "../docs/LIVE_POSTGRES_SMOKE_TEST.md",
+    "../docs/ASSOCIATION_PROBE_TECHNICAL_STATE.md",
+    "../docs/FUNCTIONALITY_COVERAGE_MATRIX.md",
     "../ValidationRules/icalps_crm_schema.yaml",
     "../ValidationRules/icalps_import_flags.md",
     "fk_cascade_graph.mmd",

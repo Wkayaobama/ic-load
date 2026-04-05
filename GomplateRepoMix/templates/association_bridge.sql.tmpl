@@ -2,7 +2,7 @@
 {{- $run := datasource "run" -}}
 {{- $commType := getenv "GOMPLATE_COMM_TYPE" -}}
 {{- $target := getenv "GOMPLATE_ASSOC_TARGET" -}}
-{{- $commCfg := index $schema.entities.Communication.bridge_tables $commType -}}
+{{- $fctTable := index $schema.entities.Communication.bridge_tables $commType -}}
 {{- $goldTable := index $schema.entities.Communication.gold_tables $commType -}}
 {{- $commTypeLower := "" -}}
 {{- if eq $commType "Calls" }}{{- $commTypeLower = "calls" -}}{{- end -}}
@@ -14,31 +14,69 @@
 {{- $leftIdColumn := printf "%s_id" $target -}}
 {{- $rightIdColumn := printf "%s_id" $commTypeLower -}}
 {{- $legacyColumn := printf "legacy_%s_id" $target -}}
-{{- $targetGoldTable := printf "hubspot.%ss" $target -}}
-{{- if eq $target "company" }}{{- $targetGoldTable = "hubspot.companies" -}}{{- end -}}
+{{- $uuidColumn := printf "associated_%s_id" $target -}}
+{{- $targetGoldTable := "hubspot.companies" -}}
 {{- if eq $target "contact" }}{{- $targetGoldTable = "hubspot.contacts" -}}{{- end -}}
 {{- if eq $target "deal" }}{{- $targetGoldTable = "hubspot.deals" -}}{{- end -}}
+{{- $stacksyncCol := index $schema.stacksync (printf "%s_record_id_column" $target) -}}
+{{- if not $stacksyncCol -}}
+  {{- if eq $target "company" }}{{- $stacksyncCol = $schema.stacksync.company_record_id_column -}}{{- end -}}
+  {{- if eq $target "contact" }}{{- $stacksyncCol = $schema.stacksync.contact_record_id_column -}}{{- end -}}
+  {{- if eq $target "deal" }}{{- $stacksyncCol = $schema.stacksync.deal_record_id_column -}}{{- end -}}
+{{- end -}}
 -- Rendered SQL association bridge
 -- Communication type: {{ $commType }}
 -- Association target: {{ $target }}
 -- Run ID: {{ $run.run_id }}
--- Invariant: shared StackSync instance, fixed association_type_id, unique_id prefix 'icalps_', NOT EXISTS idempotency guard.
+-- Invariant: shared StackSync instance, fixed association_type_id, unique_id prefix 'icalps_',
+--            two-pass resolution (Pass A: StackSync UUID, Pass B: legacy ID fallback),
+--            NOT EXISTS idempotency guard.
+-- M1 fix: template now emits two-pass pattern matching rendered SQL contract.
 
 INSERT INTO {{ $assocTable }} (
     association_type_id,
     {{ $leftIdColumn }},
     {{ $rightIdColumn }}
 )
+-- Pass A: StackSync UUID join
+-- Preferred path. Requires STACKSYNC_SYNC to have completed so that
+-- stacksync_record_id_* columns are populated in hubspot.* tables.
 SELECT DISTINCT
-    {{ $assocTypeId }} AS association_type_id,
-    target.id AS {{ $leftIdColumn }},
-    comm.id AS {{ $rightIdColumn }}
-FROM {{ $commCfg }} AS fct
-INNER JOIN {{ $goldTable }} AS comm
+    {{ $assocTypeId }},
+    target.id,
+    comm.id
+FROM {{ $goldTable }} AS comm
+INNER JOIN {{ $fctTable }} AS fct
     ON comm.unique_id = '{{ $schema.entities.Communication.idempotency_prefix }}' || fct.icalps_communication_id::text
 INNER JOIN {{ $targetGoldTable }} AS target
-    ON target.icalps_{{ $target }}_id = fct.{{ $legacyColumn }}::text
-WHERE fct.{{ $legacyColumn }} IS NOT NULL
+    ON fct.{{ $uuidColumn }}::text = target.{{ $stacksyncCol }}::text
+WHERE comm.unique_id LIKE '{{ $schema.entities.Communication.idempotency_prefix }}%'
+  AND fct.{{ $uuidColumn }} IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM {{ $assocTable }} AS assoc
+      WHERE assoc.{{ $rightIdColumn }} = comm.id
+        AND assoc.{{ $leftIdColumn }} = target.id
+        AND assoc.association_type_id = {{ $assocTypeId }}
+  )
+
+UNION
+
+-- Pass B: legacy ID fallback
+-- Used when UUID anchor is absent (record not yet synced or pre-StackSync row).
+-- Joins on icalps_*_id which is populated at Gold upsert time.
+SELECT DISTINCT
+    {{ $assocTypeId }},
+    target.id,
+    comm.id
+FROM {{ $goldTable }} AS comm
+INNER JOIN {{ $fctTable }} AS fct
+    ON comm.unique_id = '{{ $schema.entities.Communication.idempotency_prefix }}' || fct.icalps_communication_id::text
+INNER JOIN {{ $targetGoldTable }} AS target
+    ON fct.{{ $legacyColumn }}::text = target.icalps_{{ $target }}_id::text
+WHERE comm.unique_id LIKE '{{ $schema.entities.Communication.idempotency_prefix }}%'
+  AND fct.{{ $uuidColumn }} IS NULL
+  AND fct.{{ $legacyColumn }} IS NOT NULL
   AND NOT EXISTS (
       SELECT 1
       FROM {{ $assocTable }} AS assoc

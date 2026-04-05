@@ -1,0 +1,97 @@
+You are an IC'ALPS pipeline engineer working on the Silver normalization and HubSpot Ticket staging layers of a StackSync-mirrored PostgreSQL CRM database.
+
+Your task is to produce a complete, executable implementation plan for the Case/Ticket entity model including staging shape reconciliation, stage mapping, company/contact association, and duplicate prevention. The output of this prompt can be piped directly: claude -p < case_stage_ticket.txt > case_stage.txt
+
+## Entity Model: Case / Ticket
+
+### Source → Staging path
+- Bronze raw: staging.stg_cases (raw/legacy preservation layer)
+- Cleaned surface: staging.stg_case (ticket-shaped, 58 rows verified)
+- Gold target: HubSpot Tickets object (not yet live-push-ready)
+- Expected match key: icalps_case_id = Case_CaseId (to be confirmed)
+
+### Current staging assessment (from Bronze shaping probe)
+  58 source rows, 22 shaped columns
+  43/58 rows match live staging.stg_case exactly
+  Residual mismatches concentrated in:
+    - createdate (serialization format differences)
+    - icalps_case_stage (stage label normalization)
+    - small number of contact and text fields
+
+  Assessment files:
+    artifacts/assessment/stg_case_from_bronze.csv
+    artifacts/assessment/stg_case_from_bronze_assessment.json
+
+### Entity fields (22 columns)
+Core fields:
+  Case_CaseId (PK), Case_PrimaryCompanyId (FK → Company), Case_PrimaryPersonId (FK → Contact)
+  Case_AssignedUserId (FK → User/Owner), Case_Status, Case_Stage, Case_Priority
+  Case_Description, Case_Opened (datetime), Case_Closed (datetime)
+
+Denormalized (from JOINs):
+  Company_Name, Company_WebSite (from Company table)
+  Person_FirstName, Person_LastName (from Person table)
+  Person_EmailAddress (from vEmailCompanyAndPerson view)
+
+### Stage mapping (analogous to deal stage mapping — also NON-NEGOTIABLE)
+Case_Stage values from IC'ALPS are not valid HubSpot ticket stage IDs.
+Before any Gold write, icalps_case_stage must be resolved to a HubSpot-native pipeline/stage ID.
+The exact HubSpot ticket pipeline and stage IDs must be confirmed from the live portal before writing.
+Current state: stage mapping is NOT yet implemented for Case/Ticket.
+
+Known stage values from IC'ALPS (to be mapped):
+  Open, Closed, In Progress, Pending, Escalated
+  (exact values must be confirmed from stg_case before mapping)
+
+### FK dependencies (import order)
+Company must be upserted BEFORE Case.
+Contact must be upserted BEFORE Case.
+  Case_PrimaryCompanyId → hubspot.companies.icalps_company_id  (WARN — nullable FK)
+  Case_PrimaryPersonId  → hubspot.contacts.icalps_contact_id   (WARN — nullable FK)
+
+### Association patterns (not yet implemented, type IDs unconfirmed)
+The following association type IDs must be confirmed from the live HubSpot portal:
+  Ticket → Company  (type ID: TBD)
+  Ticket → Contact  (type ID: TBD)
+  Ticket → Deal     (type ID: TBD — Case_OpportunityId FK if present)
+
+Until type IDs are confirmed, NO association bridge patterns should be added.
+
+### Duplicate prevention rules
+- icalps_case_id conflict key for Gold upsert (INSERT ... ON CONFLICT DO UPDATE)
+- _load_status watermark applies (NEW and MODIFIED only)
+- dedup: if multiple stg_case rows share Case_CaseId, keep the row with the most non-null fields
+- createdate normalization: must be deterministic ISO-8601 before staging insert
+
+### Silver validation checks
+- STOP: duplicate icalps_case_id in staging.stg_case
+- STOP: null Case_CaseId
+- WARN: Case_PrimaryCompanyId references a comp_companyid not in hubspot.companies
+- WARN: Case_PrimaryPersonId references a Pers_PersonId not in hubspot.contacts
+- WARN: icalps_case_stage value not in known stage mapping table
+- WARN: Case_Opened is null or not parseable as datetime
+- WARN: createdate serialization mismatch (known residual from assessment)
+
+### Text normalization
+Case_Description is a long-form text field.
+UTF-8/mojibake cleaning must preserve meaningful line breaks in description fields.
+Do not strip all whitespace — only leading/trailing and excess internal whitespace.
+Strip unsafe control characters only.
+
+### State machine stage
+Currently NOT a production-active path. Staging and assessment only.
+Do not add to runner.py default path until:
+  1. icalps_case_stage mapping is fully defined
+  2. HubSpot Ticket association type IDs are confirmed
+  3. stg_case assessment reaches >95% row match against live staging
+
+When ready, the runner path will be:
+BRONZE_EXPORT → SILVER_NORMALISE → SILVER_VALIDATE → DBT_BUILD → GOLD_VALIDATE → GOLD_UPSERT → STACKSYNC_SYNC → ASSOC_VALIDATE
+
+### Questions to answer in your output
+1. Write the Bronze → staging shaping SQL for stg_case from stg_cases. Apply UTF-8 cleaning on Case_Description. Normalize createdate to ISO-8601. Output all 22 expected columns.
+2. Write the Silver dedup SQL for stg_case using the prefer_record_with_most_metadata rule (count non-null columns, keep max, tie-break on Case_CaseId ASC).
+3. Write the Silver validation SQL for all STOP and WARN checks listed above. Return check_name, passed, severity, row_count_failing.
+4. Write a placeholder stage mapping SQL CASE expression for icalps_case_stage → hubspot_stage_id. Use NULL for unmapped values and add a comment indicating the type IDs must be confirmed before production use.
+5. Write the read-only probe SQL that compares staging.stg_case against the Bronze-shaped output for the 43/58 match rate. Identify which columns produce residual mismatches and return a per-column mismatch count.
+6. Describe what must happen before Case/Ticket becomes a live-push-ready entity: the exact confirmation steps, the association type ID lookup query against the HubSpot portal, and the runner flag to add once ready.

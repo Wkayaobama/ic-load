@@ -1,0 +1,105 @@
+You are an IC'ALPS pipeline engineer working on the dbt communication pipeline, Silver normalization, and mirrored association bridge layers of a StackSync-mirrored PostgreSQL CRM database.
+
+Your task is to produce a complete, executable implementation plan for the Communication entity model including the dbt lineage, two-pass association bridge, and strict duplicate prevention. The output of this prompt can be piped directly: claude -p < communication_association.txt > output.txt
+
+## Entity Model: Communication
+
+### Source → dbt lineage
+staging.raw_stg_communication (77,100 rows)
+  → staging.stg_communication (29,150 rows)
+  → staging.stg_communication_normalised (6,127 rows)
+  → dbt: int_communication_classified
+       → int_communication_reconciled
+          → staging.fct_communication_calls    (5,959 rows)
+          → staging.fct_communication_notes   (11,994 rows)
+          → staging.fct_communication_tasks      (145 rows)
+          → staging.fct_communication_meetings (59,043 rows) — DEFERRED from association bridge
+
+### Idempotency key
+unique_id = 'icalps_' || icalps_communication_id::text
+This key is used across all hubspot.calls, hubspot.notes, hubspot.tasks tables.
+
+### int_communication_classified
+Maps Comm_Action to HubSpot activity class:
+  Comm_Action → 'calls' | 'notes' | 'tasks' | 'meetings'
+This classification drives which fct_communication_* mart the row lands in.
+
+### int_communication_reconciled
+Attaches resolved HubSpot record IDs via legacy-ID reconciliation:
+  legacy_company_id  (int) = Company_Id from source
+  legacy_contact_id  (int) = Person_Id from source
+  legacy_deal_id     (int) = Comm_OpportunityId from source
+  associated_company_id  (UUID) = resolved stacksync_record_id_9vpp8v
+  associated_contact_id  (UUID) = resolved stacksync_record_id_nd85zc
+  associated_deal_id     (UUID) = resolved stacksync_record_id_87b7vd
+
+### Hierarchy unflattening (QA/probe use, not production write path)
+Source: staging.raw_stg_communication
+Levels:
+  Level_000 = Company_Name              (fillna "Unknown Company")
+  Level_001 = Person_FirstName + " " + Person_LastName  (fillna "Unknown Person")
+  Level_002 = Comm_Subject[:50] + " (#id)"  or  "Communication #id"
+
+Algorithm (reverse-depth-first):
+  For level N in [0,1,2]:
+    Build path = [Level_000..Level_N]
+    NodeKey = "|".join(path)
+    If NodeKey not in node_lookup → emit node: NodeKey(int), NodeName, ParentKey, Depth=N
+    node_lookup[NodeKey] = node_counter
+
+Output: hierarchy_communication.csv (NodeKey, NodeName, ParentKey, Depth)
+        hierarchy_tree.json (nested, max_depth=2)
+
+### Two-pass association bridge
+Runs AFTER STACKSYNC_SYNC so stacksync_record_id_* are populated.
+
+Pass A — UUID join (preferred):
+  fct.associated_*_id → target.stacksync_record_id_*
+  Requires STACKSYNC_SYNC to have completed.
+
+Pass B — legacy ID fallback:
+  fct.legacy_*_id → target.icalps_*_id
+  Used when associated_*_id IS NULL.
+
+Both passes use NOT EXISTS idempotency guard. UNION (not UNION ALL) between passes.
+
+### Supported association type IDs
+  calls_company   = 182   → hubspot.associations_calls_company
+  calls_contact   = 194   → hubspot.associations_calls_contact
+  notes_company   = 190   → hubspot.associations_notes_company
+  notes_contact   = 202   → hubspot.associations_notes_contact
+  notes_deal      = 214   → hubspot.associations_notes_deal
+  tasks_company   = 192   → hubspot.associations_tasks_company
+  tasks_contact   = 204   → hubspot.associations_tasks_contact
+  meetings: DEFERRED (99.2% rows have no UUID anchor; type IDs not yet confirmed)
+
+### Live reconciliation readiness (snapshot 2026-04-04)
+  Calls:   5,943/5,959 company UUID ready — HIGHEST READINESS, probe first
+  Notes:   8,510/11,994 contact UUID ready — probe second
+  Tasks:   25/145 company UUID ready — probe last among supported
+  Meetings: 462/59,043 company UUID ready — DO NOT PROBE until reconciliation improves
+
+### Duplicate prevention rules
+- unique_id prevents duplicate engagement inserts at Gold upsert time
+- Association tables: NOT EXISTS guard prevents duplicate rows in each pass
+- UNION between Pass A and Pass B prevents the same association appearing twice
+  when a row has both UUID and legacy ID populated
+
+### Anchor completeness rule
+Communication without both company AND person anchors does not survive stg_communication_normalised.
+Zero rows in normalised table lack both anchors (verified in live staging snapshot).
+
+### State machine stage
+All parent entities (Company, Contact, Opportunity) must complete GOLD_UPSERT and STACKSYNC_SYNC
+before the communication ASSOC_VALIDATE stage runs.
+
+runner.py: --assoc-only flag skips to ASSOC_VALIDATE directly when parent entities are already synced.
+runner.py: --enable-post-gold flag enables STACKSYNC_SYNC and ASSOC_VALIDATE after GOLD_UPSERT.
+
+### Questions to answer in your output
+1. Write the int_communication_classified dbt model SQL. Map Comm_Action values to HubSpot activity class. Output columns: icalps_communication_id, comm_action_raw, hubspot_activity_class, all original columns.
+2. Write the int_communication_reconciled dbt model SQL. Join stg_communication_normalised to hubspot.companies, hubspot.contacts, hubspot.deals via legacy IDs. Output both associated_*_id (UUID) and legacy_*_id (int) columns for each entity.
+3. Write the full two-pass association SQL for Calls → Company (association_type_id=182). Pass A: UUID join. Pass B: legacy fallback. NOT EXISTS guard on both. UNION between passes. Include the unique_id prefix match.
+4. Write the full two-pass association SQL for Notes → Contact (association_type_id=202). Same structure as above but for contacts.
+5. Write the Silver validation SQL for stg_communication_normalised: (a) verify zero rows without both company and person anchors, (b) verify no duplicate icalps_communication_id, (c) verify all unique_id values follow 'icalps_' prefix.
+6. Describe the safe probe sequence for association testing: which comm_type and target to test first, what read-only verification SQL to run before any insert, and what the stop condition is.

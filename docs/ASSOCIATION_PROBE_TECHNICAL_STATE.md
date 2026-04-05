@@ -157,6 +157,24 @@ Core outcome:
   production-active behavior
 - the broader rescue method is now reusable outside `ic-load`
 
+### 6. Association Probe Completion (this branch)
+
+The sixth step addresses the critical misalignments discovered during the
+association probe review and completes the algorithm documentation.
+
+Key changes on branch `w/assoc-probe-completion`:
+
+- `association_bridge.sql.tmpl` corrected from single-pass to two-pass
+  (M1 — template was not reproducible against the rendered SQL it supposedly produced)
+- `unflatten_hierarchy.py` credentials replaced with env var reads
+  (M2 — hardcoded credentials removed, matching `context/config.py` contract)
+- `ASSOCIATION_PROBE_TECHNICAL_STATE.md` completed with algorithm descriptions,
+  full association map, StackSync timing model, and missing-file flags
+- `repomix.config.json` path note and new docs added
+- `schema_context.yaml` Meetings deferral documented
+- `render_associations.sh` concrete Gomplate execution script added
+- `salvation.md` iteration status updated
+
 ## Functional Model Recovered So Far
 
 ### Shared Layer Model
@@ -219,6 +237,398 @@ See:
 - [docs/AD_HOC_TRANSFORM_CONTEXT.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/AD_HOC_TRANSFORM_CONTEXT.md)
 - [GomplateRepoMix/repomix.config.json](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/GomplateRepoMix/repomix.config.json)
 
+## Communication Unflattening Algorithm
+
+### What The Algorithm Does
+
+`unflatten_hierarchy.py` implements a reverse-depth-first hierarchy build over
+communication data. This is not the production write path, but it captures the
+canonical mental model of the communication object and enables ad-hoc QA
+without touching Gold.
+
+Source table: `staging.raw_stg_communication` (77,100 rows)
+
+Hierarchy levels:
+
+```
+Level_000 = Company_Name
+            fillna("Unknown Company")
+
+Level_001 = Person_FirstName + " " + Person_LastName
+            fillna("Unknown Person")
+
+Level_002 = Comm_Subject[:50] + " (#Comm_CommunicationId)"
+            or "Communication #<id>" when subject is empty
+```
+
+### Algorithm Steps (Reverse-Depth-First)
+
+```
+1. Load flattened rows from staging.raw_stg_communication
+2. Derive Level_000, Level_001, Level_002 columns (see above)
+3. For level N in [0, 1, 2]:
+     a. Select rows where Level_N is not null
+     b. Build path = [Level_000, ..., Level_N] for each row
+     c. Serialize path to NodeKey = "|".join(path)
+     d. Deduplicate: skip NodeKey already in node_lookup
+     e. For new NodeKey:
+          - NodeName = path[-1]
+          - Depth    = N
+          - ParentKey = node_lookup[ "|".join(path[:-1]) ]
+                        or None if N == 0
+          - Emit node record, store in node_lookup
+4. Collect all node records into hierarchy_df
+```
+
+### Outputs
+
+```
+hierarchy_communication.csv  — flat table: NodeKey, NodeName, ParentKey, Depth
+hierarchy_tree.json          — nested tree (max_depth=2 for performance)
+
+Metadata:
+  TotalNodes  — total unique nodes emitted
+  MaxDepth    — 3 (levels 0..2)
+  RootCount   — count of Level_000 (company) nodes
+```
+
+### Why This Matters For Association Work
+
+- Communication is not a flat engagement stream only
+- Parent-child structure can be reconstructed from staging without touching Gold
+- The Company → Person → Communication chain is the same FK chain that the
+  association bridge later uses to link engagements to their parent entities
+- Understanding this shape prevents association misfires where a communication
+  is linked to the wrong company or person due to a broken hierarchy assumption
+
+## Company Hierarchy Algorithm
+
+### What The Algorithm Does
+
+`create_company_hierarchy.py` (930 lines) implements native HubSpot COMPANY
+hierarchy using a domain trick. This is the authoritative parent-child
+resolution logic for all downstream company association work.
+
+Source: `staging.stg_company_normalised`
+
+### Domain Trick
+
+Child companies receive a synthetic domain encoding their position:
+
+```
+parent:  domain = "{clean_domain}"              icalps_sibling_index = 0
+child 1: domain = "1.{clean_domain}"            icalps_sibling_index = 1
+child 2: domain = "2.{clean_domain}"            icalps_sibling_index = 2
+...
+child N: domain = "{N}.{clean_domain}"          icalps_sibling_index = N
+```
+
+`icalps_real_domain` (custom HubSpot property) stores the actual business
+domain for reporting. `icalps_sibling_index` stores the position.
+
+### Parent Selection Rule (Deterministic, 3-Tier)
+
+```
+1. Group stg_company_normalised by cleaned domain.
+   Only groups where COUNT(*) > 1 are processed.
+
+2. Among rows already in hubspot.companies (Gold-matched):
+     → pick the row with the highest contact_count
+     → tie-break: minimum comp_companyid
+
+3. If no Gold-matched row exists in the group:
+     → mark group as unresolved
+     → skip entirely (no partial mutation)
+```
+
+This is a hard rule. Unresolved groups are excluded rather than partially
+assigned.
+
+### Child Assignment
+
+```
+Remaining rows in the group (after parent selection):
+  → sorted by comp_companyid ASC
+  → assigned sibling_index 1..N in that order
+  → domain = "{sibling_index}.{clean_domain}"
+```
+
+### HubSpot Write Sequence
+
+```
+Phase 1 — hierarchy creation (no assoc flags needed):
+  1. batch/create child company records in HubSpot
+  2. Register COMPANY-COMPANY USER_DEFINED association
+     typeId 269 ("Is subsidiary of")
+     typeId 270 ("Has subsidiary")
+     body pattern: [{"associationCategory":"USER_DEFINED","associationTypeId":269}]
+     (typeId in body, NOT in URL path — v4 API requirement)
+
+Phase 2 — post-StackSync association (requires --assoc-contacts or --assoc-deals):
+  --assoc-contacts:
+     Join stg_contact_normalised.pers_companyid
+     → hubspot.companies.icalps_company_id
+     → hubspot.companies.id
+     Update hubspot.contacts.associatedcompanyid = child company id
+     StackSync outgoing sync picks up the change and pushes to HubSpot API
+
+  --assoc-deals:
+     Join stg_opportunity_normalised.oppo_primarycompanyid
+     → hubspot.companies.icalps_company_id
+     → hubspot.companies.id
+     Associate deal to child company record
+```
+
+### Live Run Result (2026-03-11)
+
+```
+Raw candidates:    504
+Plural-domain groups: 151
+Parent companies:  156
+Child companies:   293
+Siblings created:  348
+Unresolved groups:   0
+Errors:              0
+```
+
+### Cardinality
+
+```
+1 parent ↔ N children
+sibling_index 0 = parent
+sibling_index 1..N = children (sorted by comp_companyid ASC)
+```
+
+### Association Type IDs For Hierarchy
+
+```
+typeId 269  "Is subsidiary of"    (child → parent direction)
+typeId 270  "Has subsidiary"      (parent → child direction)
+```
+
+These are USER_DEFINED association labels, registered once at schema setup.
+They are NOT part of the standard HubSpot association type enumeration.
+
+## StackSync Bidirectional Sync Timing Model
+
+This model is critical for understanding why the two-pass association bridge
+exists and when it is safe to run.
+
+### Write Sequence
+
+```
+Step 1  GOLD_UPSERT
+        INSERT/UPDATE rows in hubspot.* tables via SQL.
+        At this point:
+          - icalps_*_id columns are populated (set during upsert)
+          - stacksync_record_id_* columns may be stale or NULL for new rows
+
+Step 2  STACKSYNC_SYNC checkpoint
+        StackSync detects changed rows in hubspot.* (outgoing sync trigger).
+        StackSync pushes changes to the HubSpot API.
+        StackSync pulls API-confirmed state back into hubspot.* (incoming sync).
+        After this step:
+          - stacksync_record_id_* columns are refreshed with live HubSpot IDs
+
+Step 3  ASSOC_VALIDATE
+        Association bridge SQL now has valid stacksync_record_id_* to join on.
+        Pass A (UUID join) becomes reliable.
+        Pass B (legacy ID fallback) remains for any rows not yet synced.
+```
+
+### Why The Two-Pass Fallback Exists
+
+`stacksync_record_id_*` columns are populated BY StackSync after sync.
+They are NOT available before `STACKSYNC_SYNC` completes.
+
+In practice:
+
+- newly upserted rows may not have a StackSync UUID yet
+- incremental sync windows mean some records lag behind
+- the legacy ID (`icalps_*_id`) is always available after `GOLD_UPSERT`
+
+The two-pass strategy is therefore not defensive complexity. It is required
+to cover the realistic timing gap between upsert and full sync propagation.
+
+Pass A succeeds for records that have completed the StackSync round-trip.
+Pass B covers the remainder.
+
+### StackSync Resolution Constants
+
+```
+company_record_id_column:  stacksync_record_id_9vpp8v
+contact_record_id_column:  stacksync_record_id_nd85zc
+deal_record_id_column:     stacksync_record_id_87b7vd
+```
+
+These column names are fixed. They do not change per run and are not
+configurable. They are registered in `schema_context.yaml` and must be treated
+as constants in any SQL that touches association resolution.
+
+## Complete Association Map
+
+This section documents all associations governed by the StackSync-mirrored
+PostgreSQL database, both direct entity associations and communication
+engagement associations.
+
+### Direct Entity Associations (StackSync-Governed)
+
+These associations are maintained via the `hubspot.*` mirrored tables and are
+resolved at upsert or post-StackSync time.
+
+#### Contact → Company
+
+```
+Mechanism:  hubspot.contacts.associatedcompanyid = hubspot.companies.id
+Resolution: stg_contact_normalised.pers_companyid
+            → hubspot.companies.icalps_company_id
+            → hubspot.companies.id
+
+Write path: UPDATE hubspot.contacts
+            SET associatedcompanyid = hs_company.id::text
+            FROM hubspot.companies AS hs_company
+            INNER JOIN staging.stg_contact_normalised AS stg
+              ON stg.pers_companyid = hs_company.icalps_company_id
+            WHERE hubspot.contacts.icalps_contact_id = stg.pers_personid
+
+Timing:     After GOLD_UPSERT for both Company and Contact entities.
+            StackSync outgoing sync propagates the change to HubSpot API.
+            Prerequisite: child companies must already exist in hubspot.companies
+            (Phase 2 of create_company_hierarchy.py must have completed).
+
+Filter:     Target child companies only with domain ~ '^[0-9]+\.'
+            to avoid misassociating contacts to parent records.
+```
+
+#### Deal → Company
+
+```
+Mechanism:  hubspot.deals associated to hubspot.companies
+            via stg_opportunity_normalised.oppo_primarycompanyid FK
+
+Resolution: stg_opportunity_normalised.oppo_primarycompanyid
+            → hubspot.companies.icalps_company_id
+            → hubspot.companies.id
+
+Write path: create_company_hierarchy.py --assoc-deals flag
+            Associates each deal to its resolved child company record.
+
+Timing:     Post-StackSync (child company ids must be in hubspot.companies).
+```
+
+#### Deal → Contact
+
+```
+Mechanism:  hubspot.deals associated to hubspot.contacts
+            via stg_opportunity_normalised.oppo_primarypersonid FK
+
+Resolution: stg_opportunity_normalised.oppo_primarypersonid
+            → hubspot.contacts.icalps_contact_id
+            → hubspot.contacts.id
+
+Write path: Silver FK validation gate ensures this FK is populated.
+            Gold upsert or post-StackSync association step.
+```
+
+#### Child Company → Parent Company
+
+```
+Mechanism:  USER_DEFINED COMPANY-COMPANY association
+            typeId 269 ("Is subsidiary of") child → parent
+            typeId 270 ("Has subsidiary")   parent → child
+
+Resolution: create_company_hierarchy.py parent selection algorithm
+            (see Company Hierarchy Algorithm section above)
+
+Write path: v4 batch association API
+            Body: [{"associationCategory":"USER_DEFINED","associationTypeId":269}]
+            typeId in request BODY, not URL path.
+            Idempotency: clear_subsidiary_associations() clears stale
+            USER_DEFINED 269/270 before re-association on each run.
+```
+
+### Communication Engagement Associations (Two-Pass Bridge)
+
+These associations link engagement records (Calls, Notes, Tasks) to their
+parent entities (Company, Contact, Deal) via the mirrored association tables.
+
+#### Two-Pass Resolution
+
+```
+Pass A — UUID join (preferred):
+  fct.associated_*_id  →  target.stacksync_record_id_*
+  Requires STACKSYNC_SYNC to have completed.
+
+Pass B — legacy ID fallback:
+  fct.legacy_*_id  →  target.icalps_*_id
+  Used when fct.associated_*_id IS NULL.
+  Always available after GOLD_UPSERT.
+
+Both passes use NOT EXISTS idempotency guard.
+UNION (not UNION ALL) between passes.
+```
+
+#### Supported Association Patterns And Type IDs
+
+```
+comm_type  target    association_type_id  assoc_table
+─────────  ────────  ───────────────────  ─────────────────────────────────
+Calls      company   182                  hubspot.associations_calls_company
+Calls      contact   194                  hubspot.associations_calls_contact
+Notes      company   190                  hubspot.associations_notes_company
+Notes      contact   202                  hubspot.associations_notes_contact
+Notes      deal      214                  hubspot.associations_notes_deal
+Tasks      company   192                  hubspot.associations_tasks_company
+Tasks      contact   204                  hubspot.associations_tasks_contact
+```
+
+#### Meetings — Explicit Deferral
+
+Meetings exist in `staging.fct_communication_meetings` (59,043 rows) but are
+explicitly deferred from the association bridge.
+
+Reasons:
+
+- 58,581 of 59,043 rows (99.2%) have no UUID anchor in live staging
+- association type IDs for meetings are not yet registered in `schema_context.yaml`
+- unreconciled meetings cannot safely use the legacy fallback path at scale
+
+Meetings must not be added to `association_bridge.supported_patterns` until:
+
+1. reconciliation quality improves significantly above current 0.8% UUID rate
+2. association type IDs for meetings_company and meetings_contact are confirmed
+3. a separate reconciliation improvement pass is completed on the meetings mart
+
+#### Rendered SQL Files
+
+```
+sql/rendered/association_calls_company.sql
+sql/rendered/association_calls_contact.sql
+sql/rendered/association_notes_company.sql
+sql/rendered/association_notes_contact.sql
+sql/rendered/association_notes_deal.sql
+sql/rendered/association_tasks_company.sql
+sql/rendered/association_tasks_contact.sql
+```
+
+All rendered files implement the two-pass pattern. The Gomplate template
+`GomplateRepoMix/templates/association_bridge.sql.tmpl` now also produces this
+pattern after the M1 fix in this branch.
+
+### Case Or Ticket Associations
+
+Case/Ticket associations are not yet part of the mirrored association bridge.
+
+Current state of Case/Ticket:
+
+- `staging.stg_case` is the ticket-shaped cleaned surface (58 rows)
+- Bronze-to-staging shaping is 43/58 rows exact match against live
+- no HubSpot Ticket → Company, Ticket → Contact, or Ticket → Deal
+  association patterns have been validated yet
+
+This is deferred, not dropped. The staging surface exists. The association
+type IDs must be confirmed before bridge patterns are added.
+
 ## Entity Modeling State
 
 ### Company
@@ -272,6 +682,8 @@ Critical rule:
 
 - deal stage mapping is not cosmetic
 - plain text stage labels are not safe Gold targets
+- `deal_stage_mapper.py` resolves `pipeline + stage + outcome` → HubSpot
+  pipeline ID and stage ID before any Gold write
 
 ### Communication
 
@@ -411,6 +823,11 @@ Recovered association type IDs:
 - `tasks_contact = 204`
 - `tasks_company = 192`
 
+Hierarchy association type IDs (USER_DEFINED, COMPANY-COMPANY):
+
+- `is_subsidiary_of = 269`
+- `has_subsidiary = 270`
+
 ### Live Read-Only Reconciliation Evidence
 
 From the staging-only snapshot:
@@ -439,6 +856,7 @@ From the staging-only snapshot:
   - contact UUID `375`
   - deal UUID `69`
   - unreconciled `58581`
+  - status: DEFERRED (see Meetings — Explicit Deferral above)
 
 Interpretation:
 
@@ -456,9 +874,126 @@ If and when the association probe is attempted, the safest sequence is:
 2. Notes contact
 3. Notes company or deal only after extra review
 4. Tasks only after explicit justification
-5. Meetings last
+5. Meetings last, after a reconciliation improvement pass
 
 This ordering is driven by live reconciliation evidence, not by aesthetics.
+
+## Critical Misalignments Between Repo And Salvage Contract
+
+These misalignments were discovered by confronting the repo state against
+`salvation.md` and the rendered SQL contract.
+
+### M1 — Gomplate Template Was Single-Pass (FIXED)
+
+**What was wrong:**
+`GomplateRepoMix/templates/association_bridge.sql.tmpl` performed only a single
+legacy-ID join. The rendered SQL files use a two-pass strategy with UUID-first
+then legacy fallback.
+
+**Impact:**
+The template could not regenerate the rendered SQL it was supposed to produce.
+Any Gomplate re-render would have produced incorrect SQL silently.
+
+**Fix applied (this branch):**
+Template rewritten to emit the two-pass UNION pattern, matching the rendered
+SQL contract and the `sql/render.py` Python implementation.
+
+### M2 — unflatten_hierarchy.py Had Hardcoded Credentials (FIXED)
+
+**What was wrong:**
+`unflatten_hierarchy.py` `get_postgres_connection_string()` embedded literal
+host, user, and password strings.
+
+**Impact:**
+Unusable in Codespaces or any environment without those exact credentials.
+Security risk if the file is included in the Repomix bundle.
+
+**Fix applied (this branch):**
+Replaced with `os.environ["ICALPS_DB_HOST"]`, `ICALPS_DB_USER`,
+`ICALPS_DB_PASSWORD`, `ICALPS_DB_PORT`, `ICALPS_DB_NAME`, matching the env var
+contract already defined in `context/config.py`.
+
+### M3 — repomix.config.json Uses `../../` Workspace-Relative Paths (DOCUMENTED)
+
+**What is wrong:**
+Paths like `../../ic_load_pipeline/python-ignorethis/...` resolve correctly
+from the local IC_Load workspace but fail in a fresh Codespaces clone of
+`ic-load` alone.
+
+**Impact:**
+Repomix bundle generation fails in Codespaces unless the full IC_Load workspace
+is checked out alongside `ic-load`.
+
+**Mitigation documented:**
+A note has been added to `repomix.config.json` clarifying the workspace
+dependency. The long-term fix is to copy the non-negotiable algorithm files
+into `ic-load/context/algorithms/` (deferred — requires user decision on which
+files to promote).
+
+### M4 — silver.py Loads Legacy Modules Via Sibling Path (DOCUMENTED, NOT FIXED)
+
+**What is wrong:**
+`pipeline/silver.py` uses `importlib` to load `silver_normalise.py` and
+`validate_silver.py` from `PROJECT_ROOT.parent / "ic_load_pipeline" /
+"python-ignorethis"`.
+
+**Impact:**
+Works locally when `ic-load` sits inside `IC_Load/`. Fails in Codespaces or
+any standalone checkout.
+
+**Current state:**
+The legacy modules are not copied into `ic-load`. This is a conscious salvage
+decision — the wrapper pattern was chosen to avoid duplicating large modules.
+But the path dependency must be resolved before Codespaces becomes the primary
+execution environment.
+
+**What must happen before this is fixed:**
+Decide whether to copy `silver_normalise.py` and `validate_silver.py` into
+`ic-load` or replace them with clean rewrites. Until then, Codespaces execution
+remains blocked for Silver normalization.
+
+### M5 — Meetings Have No Association Type IDs (DOCUMENTED)
+
+**What is wrong:**
+`schema_context.yaml` `association_type_ids` has no `meetings_*` entries.
+`fct_communication_meetings` is not in `association_bridge.supported_patterns`.
+
+**Impact:**
+59,043 meeting rows cannot be associated even after reconciliation improves.
+
+**Fix applied (this branch):**
+Explicit deferral note added to `schema_context.yaml`. No type IDs added yet
+because the HubSpot-side type IDs for meetings associations have not been
+confirmed from the live portal.
+
+## Missing Files That Block Runner In Codespaces
+
+The following files are required by the runner but are not present in the
+`ic-load` repo. They exist only in the legacy IC_Load workspace.
+
+```
+File                                                          Impact
+───────────────────────────────────────────────────────────  ──────────────────────────────────────────
+ic_load_pipeline/python-ignorethis/silver_normalise.py       pipeline/silver.py fails on import
+ic_load_pipeline/python-ignorethis/validate_silver.py        pipeline/silver.py fails on import
+ic_load_pipeline/python-ignorethis/deal_stage_mapper.py      runner metadata will not load stage rules
+unflatten_hierarchy.py  (IC_Load root, not in ic-load)       repomix bundle misses it in Codespaces
+ic_load_pipeline/dbt_communication/  (full dbt project)      dbt build step fails without path config
+```
+
+These are not blocking for local development when the full IC_Load workspace is
+present. They are hard blockers for any fresh Codespaces or CI execution.
+
+Resolution paths (in priority order):
+
+1. Copy `silver_normalise.py` and `validate_silver.py` into
+   `ic-load/pipeline/` or `ic-load/context/algorithms/` and update
+   `silver.py` imports accordingly.
+2. Copy `deal_stage_mapper.py` into `ic-load/context/algorithms/`.
+3. Copy `unflatten_hierarchy.py` into `ic-load/context/algorithms/`.
+4. Either include the `dbt_communication/` project in `ic-load/dbt/` or
+   document the external dbt project path requirement clearly in the
+   devcontainer and README.
 
 ## What Was Proven Against The Live Silver Or Staging Side
 
@@ -479,6 +1014,7 @@ The following remain blocked or unproven:
 - no write to `hubspot.*`
 - no mirrored association insert
 - no proof yet that second-machine devcontainer and Repomix travel cleanly
+- no Codespaces execution of Silver normalization (blocked by M4)
 
 ## Current Safety Model
 
@@ -519,6 +1055,12 @@ probe because these prerequisites are now met:
   cleanup
 - the live staging snapshot shows which communication types are most and least
   ready for reverse-lookup association work
+- the unflattening and hierarchy algorithms are now fully described, not just
+  referenced
+- the StackSync timing model is now explicit, explaining why the two-pass
+  pattern is required and not optional
+- all critical misalignments (M1, M2) have been fixed; M3–M5 are documented
+  with explicit resolution paths
 
 This means the next step is no longer "understand the entire pipeline." It is
 "probe the association mechanism carefully against the live Silver or staging
@@ -528,15 +1070,19 @@ side, using the now-stable UUID plus fallback model."
 
 Do all of the following first:
 
-1. finish second-machine portability cleanup for devcontainer and Repomix
-2. keep the association probe read-only until the exact target pattern is
+1. resolve M3 (repomix path dependency) by promoting algorithm files into
+   `ic-load/context/algorithms/` or documenting the workspace checkout
+   requirement explicitly in the devcontainer
+2. resolve M4 (silver.py path dependency) by copying or rewriting
+   `silver_normalise.py` and `validate_silver.py` inside `ic-load`
+3. keep the association probe read-only until the exact target pattern is
    chosen
-3. pick the first association family based on live reconciliation strength,
+4. pick the first association family based on live reconciliation strength,
    likely calls or notes contact
-4. confirm the target mirrored association table exists for that family
-5. confirm the UUID path and legacy fallback path with staging-side examples
-6. restate the exact insertion SQL and the exact stop conditions
-7. get explicit user confirmation before any write
+5. confirm the target mirrored association table exists for that family
+6. confirm the UUID path and legacy fallback path with staging-side examples
+7. restate the exact insertion SQL and the exact stop conditions
+8. get explicit user confirmation before any write
 
 ## Recommended Reading Before Association Work
 
@@ -547,13 +1093,14 @@ Read in this order:
 3. [docs/AD_HOC_TRANSFORM_CONTEXT.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/AD_HOC_TRANSFORM_CONTEXT.md)
 4. [docs/LIVE_POSTGRES_SMOKE_TEST.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/LIVE_POSTGRES_SMOKE_TEST.md)
 5. [pipeline/live_smoke.py](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/live_smoke.py)
-6. [pipeline/staging_resolution_probe.py](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/staging_resolution_probe.py)
+6. [pipeline/staging_resolution_probe.py](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase\IC_Load\ic-load\pipeline\staging_resolution_probe.py)
 7. [sql/render.py](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/sql/render.py)
 8. [GomplateRepoMix/staging_metadata_snapshot.json](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/GomplateRepoMix/staging_metadata_snapshot.json)
 
 ## One-Sentence State Summary
 
 The repo is now technically grounded enough to probe the association mechanism
-against the live Silver or staging side, but not yet justified to insert into
-mirrored association tables or read from `hubspot.*` without another explicit
-confidence step.
+against the live Silver or staging side, with all critical algorithm logic
+documented, two critical misalignments fixed (Gomplate template, hardcoded
+credentials), and three remaining path-dependency blockers explicitly flagged
+before any Codespaces-safe execution can be declared.

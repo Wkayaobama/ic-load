@@ -1,0 +1,58 @@
+You are an IC'ALPS pipeline engineer working on the Silver normalization and Gold upsert layers of a StackSync-mirrored PostgreSQL CRM database.
+
+Your task is to produce a complete, executable implementation plan for the Contact entity model including company association, owner lineage, and duplicate prevention. The output of this prompt can be piped directly: claude -p < contact_owner_lineage.txt > owner_lineage.txt
+
+## Entity Model: Contact (Person)
+
+### Source → Staging path
+- Bronze table: staging.stg_contact (Pers_PersonId PK)
+- Silver normalized: staging.stg_contact_normalised
+- Gold table: hubspot.contacts
+- Match key: icalps_contact_id = Pers_PersonId
+- StackSync resolution column: stacksync_record_id_nd85zc
+
+### FK dependencies (import order)
+Company must be upserted BEFORE Contact. The FK chain is:
+  stg_contact_normalised.pers_companyid → hubspot.companies.icalps_company_id
+Violation policy: REJECT (contact cannot be inserted if company is not yet in hubspot.companies)
+
+### Owner lineage
+- stg_company_normalised exposes: owner_firstname, owner_lastname (NO owner_email column)
+- owner identity is resolved by name match against HubSpot owner list
+- owner resolution is a WARN-level check, not a STOP-level check
+  unless owner_resolution_blocking is set to true in thresholds
+- owner_warn_count is tracked in ctx.metadata["validation"]["owner_warn_count"]
+
+### Company association
+- hubspot.contacts.associatedcompanyid must be set to hubspot.companies.id
+- Resolution: stg_contact_normalised.pers_companyid → hubspot.companies.icalps_company_id → hubspot.companies.id
+- This association is propagated via StackSync outgoing sync after the UPDATE
+- Apply domain filter WHERE hubspot.companies.domain ~ '^[0-9]+\.' to target child companies only
+
+### Duplicate prevention rules
+- _load_status watermark: only NEW or MODIFIED rows are upserted
+- INSERT ... ON CONFLICT (icalps_contact_id) DO UPDATE
+- Before each upsert pass: verify no duplicate icalps_contact_id in stg_contact_normalised
+- The dedup rule: if multiple stg_contact rows share the same Pers_PersonId, keep only the row with the most non-null fields (prefer_record_with_most_metadata policy from business_rules.yaml)
+
+### Silver validation checks
+- STOP: duplicate icalps_contact_id in normalized table
+- STOP: null Pers_PersonId
+- STOP: pers_companyid references a comp_companyid not in hubspot.companies (FK violation = REJECT)
+- WARN: owner name cannot be resolved to a HubSpot owner
+- WARN: pers_emailaddress null or malformed
+
+### dbt boundary
+- Contacts feed into int_communication_reconciled via legacy_contact_id
+- fct_communication_* marts expose associated_contact_id (UUID) and legacy_contact_id (int fallback)
+- dbt must run AFTER Contact Gold upsert so that icalps_contact_id is available for reconciliation
+
+### State machine stage
+BRONZE_EXPORT → SILVER_NORMALISE → SILVER_VALIDATE → DBT_BUILD → GOLD_VALIDATE → GOLD_UPSERT → STACKSYNC_SYNC → ASSOC_VALIDATE
+
+### Questions to answer in your output
+1. Write the exact PostgreSQL upsert SQL for hubspot.contacts. Conflict key: icalps_contact_id. Include _load_status filter. Apply UTF-8 cleaning on firstname and lastname. Map pers_companyid to associatedcompanyid via hubspot.companies.id subquery.
+2. Write the Silver dedup SQL that identifies duplicate icalps_contact_id rows and selects the canonical row using the prefer_record_with_most_metadata rule (count non-null columns, keep max, tie-break on Pers_PersonId ASC).
+3. Write the Silver validation SQL for all STOP checks listed above. Return check_name, passed (bool), severity, and row_count_failing.
+4. Write the SQL that updates hubspot.contacts.associatedcompanyid after STACKSYNC_SYNC, using NOT EXISTS to prevent re-updating already-associated contacts. Apply child-only filter.
+5. Write the exact runner CLI invocation for a full Contact run including owner resolution in warn mode (not blocking). Specify which flags from pipeline/runner.py to use.
