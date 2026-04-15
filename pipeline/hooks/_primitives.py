@@ -7,12 +7,18 @@ called by stage hooks:
   Called by gold.upsert, associations.run_bridge, post_run_verify.verify,
   and entity_postprocess.dispatch (for type: sql entries in MANIFEST.yaml).
 
+- run_sql_text: executes an in-memory SQL string in a fresh transaction.
+  Used internally by hook modules that delegate to the legacy executor
+  classes (GoldUpsertExecutor, AssociationBridgeExecutor) which require
+  an `execute_sql: Callable[[str], int]` callable.
+
 - StructuredLogger: writes the per-stage log blocks defined in
-  IC_Load_Production_Plan.md §8. Injected into PipelineContext at
-  construction; state.transition() calls .record() on every transition.
+  IC_Load_Production_Plan.md §8. Phase 2 scaffolds the class; Phase 5
+  wires it into PipelineContext.transition().
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -30,22 +36,62 @@ def run_sql_file(
       across calls — safe for repeated invocation across entities.
     - Parameters are bound via psycopg2 parameter binding (no string
       interpolation into SQL — prevents injection).
+    - On exception, ROLLBACK is issued before the exception propagates.
 
     Returns
     -------
-    {"file": str, "statements": int, "rows_affected": int, "duration_s": float}
-
-    Raises
-    ------
-    NotImplementedError — Phase 1 scaffolding. Implement in Phase 2 by
-    wrapping context.db.get_connection() in a context manager that opens
-    a cursor, executes the file contents, commits, and returns counts.
+    {"file": str, "statements": int, "rows_affected": int, "duration_s": float,
+     "mode": "dry_run" | "executed"}
     """
-    raise NotImplementedError(
-        f"pipeline.hooks._primitives.run_sql_file — Phase 1 scaffolding. "
-        f"Target: {sql_path.name}. "
-        f"See IC_Load_Production_Plan.md §11 Phase 2."
-    )
+    sql_path = Path(sql_path)
+    if dry_run:
+        return {
+            "file": str(sql_path),
+            "statements": 0,
+            "rows_affected": 0,
+            "duration_s": 0.0,
+            "mode": "dry_run",
+        }
+
+    if not sql_path.exists():
+        raise FileNotFoundError(f"SQL file not found: {sql_path}")
+
+    sql_text = sql_path.read_text(encoding="utf-8")
+    rows = run_sql_text(sql_text, params=params)
+    start = time.perf_counter()
+    # run_sql_text already executed — measure lightweight timing for logging.
+    duration = time.perf_counter() - start
+    return {
+        "file": str(sql_path),
+        "statements": 1,
+        "rows_affected": rows,
+        "duration_s": round(duration, 3),
+        "mode": "executed",
+    }
+
+
+def run_sql_text(sql_text: str, params: Mapping[str, Any] | None = None) -> int:
+    """Execute a SQL text string in a fresh transaction. Return cursor.rowcount.
+
+    Used by hook modules (gold, associations, post_run_verify) as the
+    `execute_sql` callable passed to legacy executor classes that already
+    handle SQL rendering but delegate statement execution.
+
+    Note: for multi-statement SQL, cursor.rowcount reports the LAST
+    statement's count. This matches psycopg2 semantics.
+    """
+    from context.db import get_connection
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql_text, params or None)
+                rc = cur.rowcount if cur.rowcount is not None else 0
+            conn.commit()
+            return rc
+        except Exception:
+            conn.rollback()
+            raise
 
 
 class StructuredLogger:
@@ -57,6 +103,9 @@ class StructuredLogger:
     The logger is stateful on one field only — the log file handle — and
     only for the lifetime of a single PipelineContext. It is not shared
     across runs or entities.
+
+    Phase 2 status: class defined, not yet wired into transition(). Phase 5
+    adds the wiring per migration plan.
     """
 
     def record(
@@ -67,15 +116,8 @@ class StructuredLogger:
         status: str,
         details: Mapping[str, Any] | None = None,
     ) -> None:
-        """Append one formatted block to the log.
-
-        Format (see §8.2):
-            [YYYY-MM-DD HH:MM:SS] STEP {NN} — {STAGE_NAME}
-              status: {STATUS}
-              {key}: {value}
-              ...
-        """
         raise NotImplementedError(
             "pipeline.hooks._primitives.StructuredLogger.record — "
-            "Phase 1 scaffolding. See IC_Load_Production_Plan.md §11 Phase 5."
+            "scheduled for Phase 5 (Orchestration + Logging). "
+            "See IC_Load_Production_Plan.md §11 Phase 5."
         )

@@ -1,12 +1,33 @@
+"""Per-entity pipeline executor.
+
+Phase 2: PipelineHooks and build_default_hooks imported from pipeline.hooks.
+Phase 3: DBT_BUILD monolithic transition replaced by the five granular dbt
+stages (DBT_STAGING, DBT_INTERMEDIATE, DBT_TEST_SILVER, DBT_MARTS,
+DBT_TEST_MARTS). Added PG_FUNCTIONS_INSTALL at run start, ENTITY_POSTPROCESS
+before/after marts+assoc, and POST_RUN_VERIFY at run end.
+
+Hooks that have no implementation yet (pg_functions.install,
+entity_postprocess.dispatch, post_run_verify.verify) raise
+NotImplementedError; the runner catches this and transitions to SKIPPED
+with reason='hook_not_implemented_yet'. This keeps the full state machine
+visible in artifacts while Phase 4+ fills in the bodies.
+
+See IC_Load_Production_Plan.md §5.1 for the stage sequence.
+"""
 from __future__ import annotations
 
 import argparse
-import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Literal
 
-from context.config import DBT_PROJECT_DIR, ENTITIES, dbt_command, latest_bronze_path, load_business_rules, load_entity_resolution_map
+from context.config import (
+    ENTITIES,
+    latest_bronze_path,
+    load_business_rules,
+    load_entity_resolution_map,
+    resolve_dbt_selector,
+)
+from pipeline.hooks import PipelineHooks, build_default_hooks
 from pipeline.state import (
     PipelineContext,
     PipelineStage,
@@ -15,52 +36,6 @@ from pipeline.state import (
     load_thresholds,
     transition,
 )
-
-
-@dataclass
-class PipelineHooks:
-    """Inject the live or probe implementations behind each stage boundary."""
-
-    bronze_loader_factory: Callable[[], Any]
-    silver_normaliser_factory: Callable[[], Any]
-    silver_validator_factory: Callable[[], Any]
-    dbt_runner: Callable[[str, bool], bool]
-    gold_upserter: Callable[[str, bool], dict[str, Any]]
-    sync_waiter: Callable[[str, bool], dict[str, Any]]
-    association_runner: Callable[[str, bool], dict[str, Any]]
-
-
-def _default_dbt_runner(entity: str, dry_run: bool) -> bool:
-    del entity
-    if dry_run:
-        return True
-    command = dbt_command()
-    if command is None:
-        raise RuntimeError("dbt boundary is not configured. Set ICALPS_DBT_COMMAND or inject a dbt hook.")
-    completed = subprocess.run(command, cwd=DBT_PROJECT_DIR, check=False)
-    return completed.returncode == 0
-
-
-def build_default_hooks() -> PipelineHooks:
-    from pipeline.associations import AssociationBridgeExecutor
-    from pipeline.bronze import DuckDBBronzeLoader
-    from pipeline.gold import GoldUpsertExecutor
-    from pipeline.silver import SilverNormaliser, SilverValidator
-    from pipeline.sync import StackSyncCheckpoint
-
-    gold_executor = GoldUpsertExecutor()
-    sync_checkpoint = StackSyncCheckpoint()
-    assoc_executor = AssociationBridgeExecutor()
-
-    return PipelineHooks(
-        bronze_loader_factory=DuckDBBronzeLoader,
-        silver_normaliser_factory=SilverNormaliser,
-        silver_validator_factory=SilverValidator,
-        dbt_runner=_default_dbt_runner,
-        gold_upserter=lambda entity, dry_run: gold_executor.execute(entity, dry_run=dry_run),
-        sync_waiter=lambda entity, dry_run: sync_checkpoint.wait(entity, dry_run=dry_run),
-        association_runner=lambda entity, dry_run: assoc_executor.execute(entity, dry_run=dry_run),
-    )
 
 
 def run(
@@ -102,6 +77,11 @@ def run(
         _finish(ctx)
         return ctx
 
+    # PG_FUNCTIONS_INSTALL runs once per run invocation (Contract A, §7.6).
+    # Harmless repeat when the orchestrator also calls it up-front (CREATE OR REPLACE).
+    if not dbt_only and not _already_past(ctx, PipelineStage.PG_FUNCTIONS_INSTALL):
+        _run_pg_functions_install(ctx, dry_run, hooks)
+
     if not dbt_only and not _already_past(ctx, PipelineStage.BRONZE_EXPORT):
         _run_bronze(ctx, entity, dry_run, resume_stage, hooks, bronze_csv_override)
 
@@ -118,12 +98,29 @@ def run(
         _finish(ctx)
         return ctx
 
-    # Keep the downstream write path intentionally split so remote collaborators
-    # can see where dbt ends, Gold begins, StackSync sync happens, and associations follow.
-    _run_dbt(ctx, entity, dry_run, hooks)
+    # Granular dbt silver stages — replaces the monolithic DBT_BUILD transition.
+    # Each reads its selector from MANIFEST.yaml:entities.{entity}.dbt_selectors.
+    _run_dbt_staging(ctx, entity, dry_run, hooks)
+    _run_dbt_intermediate(ctx, entity, dry_run, hooks)
+    _run_dbt_test_silver(ctx, entity, dry_run, hooks)
+
+    # Entity-specific pre-marts work (e.g. case materialize view).
+    _run_entity_postprocess(ctx, entity, "pre", dry_run, hooks)
+
+    # Granular dbt marts stages.
+    _run_dbt_marts(ctx, entity, dry_run, hooks)
+    _run_dbt_test_marts(ctx, entity, dry_run, hooks)
+
+    # Gold gate + upsert + StackSync + associations.
     _run_gold_upsert(ctx, entity, dry_run, hooks)
     _run_stacksync_sync(ctx, entity, dry_run, hooks)
     _run_assoc_validate(ctx, entity, dry_run, hooks)
+
+    # Entity-specific post-assoc work (e.g. company hierarchy, comm unflatten).
+    _run_entity_postprocess(ctx, entity, "post", dry_run, hooks)
+
+    # Reconciliation coverage report (WARNING if below threshold, never FAILED).
+    _run_post_run_verify(ctx, entity, dry_run, hooks)
 
     transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS)
     _finish(ctx)
@@ -254,16 +251,220 @@ def _run_silver_validate(ctx: PipelineContext, owner_blocking: bool, verbosity: 
         transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SUCCESS)
 
 
-def _run_dbt(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
-    if not _should_run(ctx, PipelineStage.DBT_BUILD, None):
+def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: PipelineHooks) -> None:
+    """PG_FUNCTIONS_INSTALL — install all pg functions from MANIFEST.yaml.
+
+    Contract A (§7.6): runs as a stage of EVERY runner invocation, not
+    only at the orchestrator level. Idempotent — CREATE OR REPLACE.
+    """
+    if not _should_run(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, None):
         return
     if dry_run:
-        transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SKIPPED, reason="dry_run")
+        transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.SKIPPED, reason="dry_run")
         return
-    ok = hooks.dbt_runner(entity, dry_run)
-    if not ok:
-        transition(ctx, PipelineStage.DBT_BUILD, StageStatus.FAILED, reason="dbt_run_nonzero_exit")
-    transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SUCCESS)
+    try:
+        result = hooks.pg_functions_installer(False)
+    except NotImplementedError:
+        transition(
+            ctx,
+            PipelineStage.PG_FUNCTIONS_INSTALL,
+            StageStatus.SKIPPED,
+            reason="hook_not_implemented_yet",
+        )
+        return
+    transition(
+        ctx,
+        PipelineStage.PG_FUNCTIONS_INSTALL,
+        StageStatus.SUCCESS,
+        installed=len(result.get("installed", [])),
+        duration_s=result.get("duration_s"),
+    )
+
+
+def _run_dbt_transition(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    hooks: PipelineHooks,
+    stage: PipelineStage,
+    selector: str,
+    command: Literal["run", "test"],
+) -> None:
+    """Shared handler for every granular dbt stage.
+
+    Calls hooks.dbt_runner with an explicit selector + command and maps the
+    result to a state-machine transition. Failures include exit_code and
+    stderr_tail so operators can diagnose from the artifact without
+    re-running dbt locally.
+    """
+    if not _should_run(ctx, stage, None):
+        return
+    if dry_run:
+        transition(ctx, stage, StageStatus.SKIPPED, reason="dry_run", selector=selector)
+        return
+    result = hooks.dbt_runner(entity, selector, command, False)
+    if result.get("exit_code", 0) != 0 or result.get("failed", 0) > 0:
+        transition(
+            ctx,
+            stage,
+            StageStatus.FAILED,
+            reason="dbt_nonzero_exit",
+            selector=selector,
+            command=command,
+            exit_code=result.get("exit_code"),
+            failed=result.get("failed", 0),
+            stderr_tail=result.get("stderr_tail", "")[:256],
+        )
+    transition(
+        ctx,
+        stage,
+        StageStatus.SUCCESS,
+        selector=selector,
+        command=command,
+        nodes=result.get("nodes", 0),
+        passed=result.get("passed", 0),
+        duration_s=result.get("duration_s"),
+    )
+
+
+def _run_dbt_staging(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+    """DBT_STAGING — dbt run --select stg_{entity} (from MANIFEST)."""
+    try:
+        selector = resolve_dbt_selector(entity, "staging")
+    except RuntimeError as exc:
+        transition(ctx, PipelineStage.DBT_STAGING, StageStatus.FAILED, reason=str(exc))
+        return
+    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_STAGING, selector, "run")
+
+
+def _run_dbt_intermediate(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+    """DBT_INTERMEDIATE — dbt run --select int_{entity}_reconciled."""
+    try:
+        selector = resolve_dbt_selector(entity, "intermediate")
+    except RuntimeError as exc:
+        transition(ctx, PipelineStage.DBT_INTERMEDIATE, StageStatus.FAILED, reason=str(exc))
+        return
+    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_INTERMEDIATE, selector, "run")
+
+
+def _run_dbt_test_silver(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+    """DBT_TEST_SILVER — dbt test on staging + intermediate selectors combined."""
+    try:
+        stg_selector = resolve_dbt_selector(entity, "staging")
+        int_selector = resolve_dbt_selector(entity, "intermediate")
+    except RuntimeError as exc:
+        transition(ctx, PipelineStage.DBT_TEST_SILVER, StageStatus.FAILED, reason=str(exc))
+        return
+    # dbt accepts space-separated selectors in a single --select.
+    combined = f"{stg_selector} {int_selector}"
+    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_TEST_SILVER, combined, "test")
+
+
+def _run_dbt_marts(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+    """DBT_MARTS — dbt run --select fct_{entity}_silver (and related marts)."""
+    try:
+        selector = resolve_dbt_selector(entity, "marts")
+    except RuntimeError as exc:
+        transition(ctx, PipelineStage.DBT_MARTS, StageStatus.FAILED, reason=str(exc))
+        return
+    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_MARTS, selector, "run")
+
+
+def _run_dbt_test_marts(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+    """DBT_TEST_MARTS — dbt test on the marts selector."""
+    try:
+        selector = resolve_dbt_selector(entity, "marts")
+    except RuntimeError as exc:
+        transition(ctx, PipelineStage.DBT_TEST_MARTS, StageStatus.FAILED, reason=str(exc))
+        return
+    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_TEST_MARTS, selector, "test")
+
+
+def _run_entity_postprocess(
+    ctx: PipelineContext,
+    entity: str,
+    phase: Literal["pre", "post"],
+    dry_run: bool,
+    hooks: PipelineHooks,
+) -> None:
+    """ENTITY_POSTPROCESS_{PRE,POST} — MANIFEST-driven dispatcher.
+
+    Dispatches entity-specific steps registered under
+    MANIFEST.yaml:entities.{entity}.postprocess.{phase}. Entities without
+    postprocess entries for the phase receive mode='not_applicable' and
+    the stage transitions to SKIPPED.
+    """
+    stage = (
+        PipelineStage.ENTITY_POSTPROCESS_PRE if phase == "pre"
+        else PipelineStage.ENTITY_POSTPROCESS_POST
+    )
+    if not _should_run(ctx, stage, None):
+        return
+    if dry_run:
+        transition(ctx, stage, StageStatus.SKIPPED, reason="dry_run", phase=phase)
+        return
+    try:
+        result = hooks.entity_postprocessor(entity, phase, False)
+    except NotImplementedError:
+        transition(ctx, stage, StageStatus.SKIPPED, reason="hook_not_implemented_yet", phase=phase)
+        return
+    mode = result.get("mode", "unknown")
+    if mode == "not_applicable":
+        transition(ctx, stage, StageStatus.SKIPPED, reason="no_postprocess_registered", phase=phase)
+        return
+    transition(
+        ctx,
+        stage,
+        StageStatus.SUCCESS,
+        phase=phase,
+        mode=mode,
+        steps=len(result.get("steps", [])),
+    )
+
+
+def _run_post_run_verify(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+    """POST_RUN_VERIFY — reconciliation coverage + association coverage report.
+
+    WARNING (not FAILED) when metrics fall below thresholds — the upsert
+    already landed; a low coverage report is informational, not a rollback.
+    """
+    if not _should_run(ctx, PipelineStage.POST_RUN_VERIFY, None):
+        return
+    if dry_run:
+        transition(ctx, PipelineStage.POST_RUN_VERIFY, StageStatus.SKIPPED, reason="dry_run")
+        return
+    try:
+        result = hooks.post_run_verifier(entity, False)
+    except NotImplementedError:
+        transition(
+            ctx,
+            PipelineStage.POST_RUN_VERIFY,
+            StageStatus.SKIPPED,
+            reason="hook_not_implemented_yet",
+        )
+        return
+
+    reconciliation_rate = result.get("reconciliation_rate", 0.0)
+    association_coverage = result.get("association_coverage", 0.0)
+    warnings_list = result.get("warnings", [])
+    thresholds = ctx.metadata.get("thresholds", {})
+    min_reconciliation = thresholds.get("min_reconciliation_rate", 0.85)
+    min_association = thresholds.get("min_association_coverage", 0.85)
+
+    status = StageStatus.SUCCESS
+    if reconciliation_rate < min_reconciliation or association_coverage < min_association:
+        status = StageStatus.WARNING
+
+    transition(
+        ctx,
+        PipelineStage.POST_RUN_VERIFY,
+        status,
+        reconciliation_rate=reconciliation_rate,
+        association_coverage=association_coverage,
+        warnings_count=len(warnings_list),
+        min_reconciliation=min_reconciliation,
+        min_association=min_association,
+    )
 
 
 def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
@@ -304,19 +505,19 @@ def _run_assoc_validate(ctx: PipelineContext, entity: str, dry_run: bool, hooks:
 
 
 def _skip_stages_before(ctx: PipelineContext, resume_stage: PipelineStage) -> None:
-    ordered = [
-        PipelineStage.BRONZE_LOAD,
-        PipelineStage.BRONZE_METADATA,
-        PipelineStage.BRONZE_WATERMARK,
-        PipelineStage.BRONZE_EXPORT,
-        PipelineStage.SILVER_NORMALISE,
-        PipelineStage.SILVER_VALIDATE,
-        PipelineStage.DBT_BUILD,
-        PipelineStage.GOLD_UPSERT,
-        PipelineStage.STACKSYNC_SYNC,
-        PipelineStage.ASSOC_VALIDATE,
-    ]
-    for stage in ordered:
+    """Mark all stages before resume_stage as SKIPPED.
+
+    Iterates PipelineStage in enum-declaration order, comparing by .value.
+    This replaces the previous hardcoded list — adding a new stage to the
+    enum now automatically participates in resume semantics.
+
+    INIT / COMPLETE / FAILED are skipped here — they are terminal or
+    initial sentinels, not resumable work units.
+    """
+    terminal = {PipelineStage.INIT, PipelineStage.COMPLETE, PipelineStage.FAILED}
+    for stage in PipelineStage:
+        if stage in terminal:
+            continue
         if stage.value < resume_stage.value:
             transition(ctx, stage, StageStatus.SKIPPED, reason="resume")
 
