@@ -10,17 +10,58 @@ from context.config import ARTIFACTS_DIR, load_thresholds as _load_thresholds
 
 
 class PipelineStage(Enum):
+    """Stage boundaries in the pipeline.
+
+    Legacy stages (SILVER_NORMALISE, DBT_BUILD) are retained for backwards
+    compatibility with the existing runner.py. They are deprecated and
+    will be removed in Phase 2 of the migration plan (see
+    IC_Load_Production_Plan.md §11 Phase 2) once runner.py is rewired
+    to use the finer-grained DBT_* stages.
+
+    New stages introduced in Phase 1 scaffolding align with the hooks
+    defined in pipeline/hooks/ (one-to-one mapping; see §7.3 and §7.4
+    of the plan).
+    """
+
     INIT = auto()
+
+    # Phase 1 NEW — pg functions install (Contract A, §7.6)
+    PG_FUNCTIONS_INSTALL = auto()
+
+    # Bronze
     BRONZE_LOAD = auto()
     BRONZE_METADATA = auto()
     BRONZE_WATERMARK = auto()
     BRONZE_EXPORT = auto()
-    SILVER_NORMALISE = auto()
+
+    # Silver
+    SILVER_NORMALISE = auto()  # DEPRECATED — replaced by DBT_STAGING + DBT_INTERMEDIATE
     SILVER_VALIDATE = auto()
-    DBT_BUILD = auto()
+
+    # dbt — Phase 1 NEW (replaces monolithic DBT_BUILD)
+    DBT_STAGING = auto()
+    DBT_INTERMEDIATE = auto()
+    DBT_TEST_SILVER = auto()
+    DBT_MARTS = auto()
+    DBT_TEST_MARTS = auto()
+    DBT_BUILD = auto()  # DEPRECATED — kept for backwards compat
+
+    # Entity postprocess — Phase 1 NEW (MANIFEST-driven dispatcher)
+    ENTITY_POSTPROCESS_PRE = auto()
+    ENTITY_POSTPROCESS_POST = auto()
+
+    # Guardrails + Gold
+    DEDUPE_GUARD = auto()
+    GOLD_VALIDATE = auto()
     GOLD_UPSERT = auto()
+
+    # Sync + Associations
     STACKSYNC_SYNC = auto()
     ASSOC_VALIDATE = auto()
+
+    # Phase 1 NEW — post-run verification
+    POST_RUN_VERIFY = auto()
+
     COMPLETE = auto()
     FAILED = auto()
 

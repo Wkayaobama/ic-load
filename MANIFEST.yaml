@@ -1,0 +1,160 @@
+# MANIFEST.yaml — data registry for the IC_Load pipeline.
+#
+# Purpose
+# -------
+# Stages are fixed in pipeline.state.PipelineStage (code). This file
+# registers the DATA that each stage consults:
+#   - pg function files to install
+#   - per-entity identifiers and dbt selectors
+#   - SQL files each hook executes
+#   - entity-specific postprocess steps (MANIFEST-driven dispatcher)
+#   - hook-module paths (authoritative pointer for operators tracing failures)
+#
+# This file does NOT enumerate stages — stages are owned by the runner.
+# This file does NOT contain .sh scripts — none exist in this pipeline.
+#
+# See IC_Load_Production_Plan.md §10 for the design rationale.
+
+version: "3.0"
+last_updated: "2026-04-15"
+phase_status: "Phase 1 scaffolding — hooks raise NotImplementedError until Phase 2"
+
+# pg function files installed by PG_FUNCTIONS_INSTALL.
+# These files DO NOT EXIST YET — Phase 3 of the migration plan creates them.
+pg_functions:
+  - sql/functions/fn_clean_utf8.sql
+  - sql/functions/fn_clean_html.sql
+  - sql/functions/fn_normalize_phone_e164.sql
+  - sql/functions/fn_extract_domain.sql
+  - sql/functions/fn_validate_linkedin_url.sql
+  - sql/functions/fn_normalize_employee_range.sql
+  - sql/functions/fn_map_company_status.sql
+  - sql/functions/fn_map_company_type.sql
+  - sql/functions/fn_map_contact_status.sql
+  - sql/functions/fn_map_country_iso.sql
+  - sql/functions/fn_map_lifecycle_stage.sql
+
+# Per-entity registration — identifiers, dbt selectors, SQL files,
+# postprocess entries. No stages listed (they are fixed in
+# PipelineStage enum). No .sh files (none exist).
+entities:
+  company:
+    gold_table: hubspot.companies
+    primary_key: Comp_CompanyId
+    reconciliation_key: icalps_company_id
+    stacksync_record_id: stacksync_record_id_9vpp8v
+    dbt_selectors:
+      staging:      "stg_company"
+      intermediate: "int_company_reconciled"
+      marts:        "fct_company_silver"
+    sql_files:
+      gold_upsert:        sql/company/07_gold_upsert.sql
+      association_bridge: sql/company/09_association_bridge.sql
+      post_run_verify:    sql/company/10_post_run_verify.sql
+    postprocess:
+      post:
+        - { type: python, module: pipeline.hierarchy, fn: run,
+            note: "Native COMPANY domain-trick hierarchy (Phase 2)" }
+
+  contact:
+    gold_table: hubspot.contacts
+    primary_key: Pers_PersonId
+    reconciliation_key: icalps_contact_id
+    stacksync_record_id: stacksync_record_id_nd85zc
+    dbt_selectors:
+      staging:      "stg_contact"
+      intermediate: "int_contact_reconciled"
+      marts:        "fct_contact_silver"
+    sql_files:
+      gold_upsert:        sql/contact/07_gold_upsert.sql
+      association_bridge: sql/contact/09_association_bridge.sql
+      post_run_verify:    sql/contact/10_post_run_verify.sql
+    # no postprocess — universal sequence is complete
+
+  opportunity:
+    gold_table: hubspot.deals
+    primary_key: Oppo_OpportunityId
+    reconciliation_key: icalps_deal_id
+    stacksync_record_id: stacksync_record_id_87b7vd
+    dbt_selectors:
+      staging:      "stg_opportunity"
+      intermediate: "int_opportunity_reconciled"
+      marts:        "fct_opportunity_silver"
+    sql_files:
+      gold_upsert:        sql/opportunity/07_gold_upsert.sql
+      association_bridge: sql/opportunity/09_association_bridge.sql
+      post_run_verify:    sql/opportunity/10_post_run_verify.sql
+    postprocess:
+      pre:
+        - { type: python, module: pipeline.dedupe, fn: run_probe,
+            note: "Levenshtein probe — probe-mode only" }
+
+  communication:
+    gold_table: "hubspot.{calls,tasks,notes,meetings}"
+    primary_key: Comm_CommunicationId
+    reconciliation_key: icalps_communication_id
+    dbt_selectors:
+      staging:      "stg_communication"
+      intermediate: "int_communication_classified int_communication_reconciled"
+      marts:        "tag:communication_marts"
+    sql_files:
+      gold_upsert:        sql/communication/07_gold_engagement_upsert.sql
+      association_bridge: sql/communication/09_association_bridge.sql
+      post_run_verify:    sql/communication/10_post_run_verify.sql
+    postprocess:
+      post:
+        - { type: python, module: pipeline.unflatten, fn: run,
+            note: "Recursive BFS graph traversal" }
+
+  case:
+    gold_table: hubspot.tickets
+    primary_key: Case_CaseId
+    reconciliation_key: icalps_case_id
+    dbt_selectors:
+      staging:      "stg_case"
+      intermediate: "int_case_reconciled"
+      marts:        "fct_case_silver"
+    sql_files:
+      gold_upsert:        sql/case/07_gold_upsert.sql
+      association_bridge: sql/case/09_association_bridge.sql
+      post_run_verify:    sql/case/10_post_run_verify.sql
+    gold_gated: true          # GOLD_VALIDATE requires --approve-gold
+    postprocess:
+      pre:
+        - { type: sql, file: sql/case/02b_materialize_view.sql,
+            note: "REFRESH MATERIALIZED VIEW stg_case_v2" }
+        - { type: sql, file: sql/case/09b_pre_gold_association_probe.sql,
+            note: "Verify expected ticket association counts before gold upsert" }
+
+# Algorithms that stay in Python (non-negotiable safety or complex logic).
+# See IC_Load_Production_Plan.md §2 for rationale per entry.
+python_only_algorithms:
+  - { name: "deal_stage_mapper",   file: "context/algorithms/deal_stage_mapper.py",
+      reason: "non-negotiable safety; raises ValueError on unmapped" }
+  - { name: "unflatten_hierarchy", file: "pipeline/unflatten.py",
+      reason: "recursive BFS graph traversal" }
+  - { name: "levenshtein_dedup",   file: "pipeline/dedupe.py",
+      reason: "complex scoring with threshold bands" }
+
+# Authoritative pointer: where does each stage's hook live?
+# Operators reading a failed log use this to find the module + docstring
+# for the failing stage. See IC_Load_Production_Plan.md §7.5.
+hook_modules:
+  PG_FUNCTIONS_INSTALL:     pipeline/hooks/pg_functions.py
+  BRONZE_LOAD:              pipeline/hooks/bronze.py
+  BRONZE_METADATA:          pipeline/hooks/bronze.py
+  BRONZE_WATERMARK:         pipeline/hooks/bronze.py
+  BRONZE_EXPORT:            pipeline/hooks/bronze.py
+  SILVER_VALIDATE:          pipeline/hooks/silver_validator.py
+  DBT_STAGING:              pipeline/hooks/dbt.py
+  DBT_INTERMEDIATE:         pipeline/hooks/dbt.py
+  DBT_TEST_SILVER:          pipeline/hooks/dbt.py
+  DBT_MARTS:                pipeline/hooks/dbt.py
+  DBT_TEST_MARTS:           pipeline/hooks/dbt.py
+  ENTITY_POSTPROCESS_PRE:   pipeline/hooks/entity_postprocess.py
+  ENTITY_POSTPROCESS_POST:  pipeline/hooks/entity_postprocess.py
+  DEDUPE_GUARD:             pipeline/hooks/dedupe.py
+  GOLD_UPSERT:              pipeline/hooks/gold.py
+  STACKSYNC_SYNC:           pipeline/hooks/sync.py
+  ASSOC_VALIDATE:           pipeline/hooks/associations.py
+  POST_RUN_VERIFY:          pipeline/hooks/post_run_verify.py
