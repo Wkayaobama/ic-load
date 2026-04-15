@@ -4,10 +4,15 @@ Hook:  run_bridge (PipelineHooks.association_runner)
 
 What it does
 ------------
-Executes sql/{entity}/09_association_bridge.sql via sql_file_runner. The
-SQL implements the two-pass resolution pattern defined in
-IC_Load_Production_Plan.md §6.1:
+Renders and executes association-bridge SQL via the existing
+`pipeline.associations.AssociationBridgeExecutor`. The executor reads
+GomplateRepoMix/schema_context.yaml to discover supported patterns
+(comm_type × target pairs), renders the two-pass resolution SQL via
+`sql.render.render_association_bridge`, writes each rendered .sql to
+SQL_RENDERED_DIR, then executes via the injected `execute_sql` callable.
 
+Two-pass resolution (§6.1)
+--------------------------
     Pass A — StackSync UUID preferred:
         JOIN on stacksync_record_id_* columns (high-fidelity, requires
         StackSync to have propagated post-gold).
@@ -16,73 +21,63 @@ IC_Load_Production_Plan.md §6.1:
         JOIN on icalps_{entity}_id columns when UUIDs are still NULL
         (works immediately after gold upsert, before StackSync cycles).
 
-Association type IDs are read from GomplateRepoMix/schema_context.yaml
-(NOT from this hook directly — the existing load_schema_context() loader
-in context/config.py handles the read).
+Current scope: communication only
+---------------------------------
+The existing AssociationBridgeExecutor returns `mode="not_applicable"`
+for non-communication entities. Phase 3 of the migration plan extends
+coverage to company/contact/opportunity/case bridges.
 
 Upstream assumptions
 --------------------
 - GOLD_UPSERT → records exist in hubspot.{entity}
-- STACKSYNC_SYNC → coverage logged (non-blocking; low coverage OK here
+- STACKSYNC_SYNC → coverage logged (non-blocking; low coverage is OK
   because pass B handles the fallback)
 
 Writes / side effects
 ---------------------
-- INSERT into hubspot.associations_* tables.
-- Transaction: single sql_file_runner invocation wraps both passes.
-- Updates transition details: pass_a_inserted, pass_b_inserted, total.
+- Reads: GomplateRepoMix/schema_context.yaml.
+- Writes: rendered SQL files to SQL_RENDERED_DIR (for audit).
+- INSERT into hubspot.associations_* tables — one fresh transaction
+  per rendered statement (Contract B, via run_sql_text).
+- Updates transition details: mode, statements list.
 
 Common failure modes and diagnosis
 ----------------------------------
-- pass_a_inserted == 0 and pass_b_inserted > 0
-    → Normal immediately post-gold. StackSync hasn't populated UUIDs
-      yet; pass B covered everything via legacy IDs. Re-run --assoc-only
-      after StackSync cycles to promote legacy-ID associations to UUIDs.
-
 - "no association type defined for {source}→{target}"
-    → The association typeId is missing from schema_context.yaml. Check
-      §6.2 in the plan for the full list; if a new entity pair is
-      introduced, register it in schema_context.yaml and re-run.
+    → typeId missing from schema_context.yaml. Check §6.2 in the plan
+      for the full list. If a new entity pair is introduced, register
+      it in schema_context.yaml and re-run.
 
 - Both passes insert 0 rows
     → Either (a) no records exist in hubspot.{entity} to associate from,
       (b) the SQL's WHERE clause over-filters. Inspect by running the
-      SQL file directly against a dev database.
+      rendered .sql file from SQL_RENDERED_DIR directly against a dev db.
 
-- WARNING if coverage < threshold
-    → threshold defined in context.config.load_thresholds(entity). The
-      SQL should report coverage; a coverage below the entity's
-      association threshold transitions to WARNING, not FAILED.
+- WARNING mode="not_applicable"
+    → Current implementation only handles communication. Expected for
+      company / contact / opportunity / case until Phase 3.
 
 Re-running
 ----------
-Idempotent. INSERT statements use ON CONFLICT DO NOTHING or include
-NOT EXISTS guards. Safe to re-invoke; safe to use as --assoc-only gate
-after StackSync propagates.
-
-Phase 1 notes
--------------
-Existing pipeline.associations.AssociationBridgeExecutor already wraps
-the SQL execution and reads schema_context.yaml. Phase 2 thins this hook
-to a direct delegation.
+Idempotent. The rendered SQL uses ON CONFLICT DO NOTHING / NOT EXISTS
+guards. Safe to re-invoke; safe to use as --assoc-only gate after
+StackSync propagates.
 """
 from __future__ import annotations
 
 from typing import Any
 
+from pipeline.associations import AssociationBridgeExecutor
+from pipeline.hooks._primitives import run_sql_text
+
 
 def run_bridge(entity: str, dry_run: bool = False) -> dict[str, Any]:
-    """Execute sql/{entity}/09_association_bridge.sql (two-pass).
+    """Render and execute association bridge SQL for entity.
 
-    Phase 2 implementation sketch:
-        1. Resolve path from MANIFEST.yaml:entities.{entity}.sql_files.association_bridge.
-        2. Load schema_context.yaml (association typeIds) via context.config.
-        3. Call _primitives.run_sql_file with typeIds as parameters.
-        4. Return {"mode": "live", "pass_a_inserted": ..., "pass_b_inserted": ...,
-           "statements": [..]}.
+    Fresh executor instance per call (Contract B).
     """
-    raise NotImplementedError(
-        f"pipeline.hooks.associations.run_bridge — Phase 1 scaffolding. "
-        f"Called for entity={entity!r}. "
-        f"Phase 2: delegate to pipeline.associations.AssociationBridgeExecutor.execute()."
-    )
+    executor = AssociationBridgeExecutor()
+    if dry_run:
+        return executor.execute(entity, dry_run=True)
+
+    return executor.execute(entity, dry_run=False, execute_sql=run_sql_text)

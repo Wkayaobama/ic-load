@@ -1,12 +1,16 @@
+"""Per-entity pipeline executor.
+
+Phase 2 rewiring: PipelineHooks and build_default_hooks are imported from
+pipeline.hooks — no longer defined inline here. See IC_Load_Production_Plan.md
+§7.4 for the hooks folder contract.
+"""
 from __future__ import annotations
 
 import argparse
-import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
 
-from context.config import DBT_PROJECT_DIR, ENTITIES, dbt_command, latest_bronze_path, load_business_rules, load_entity_resolution_map
+from context.config import ENTITIES, latest_bronze_path, load_business_rules, load_entity_resolution_map
+from pipeline.hooks import PipelineHooks, build_default_hooks
 from pipeline.state import (
     PipelineContext,
     PipelineStage,
@@ -15,52 +19,6 @@ from pipeline.state import (
     load_thresholds,
     transition,
 )
-
-
-@dataclass
-class PipelineHooks:
-    """Inject the live or probe implementations behind each stage boundary."""
-
-    bronze_loader_factory: Callable[[], Any]
-    silver_normaliser_factory: Callable[[], Any]
-    silver_validator_factory: Callable[[], Any]
-    dbt_runner: Callable[[str, bool], bool]
-    gold_upserter: Callable[[str, bool], dict[str, Any]]
-    sync_waiter: Callable[[str, bool], dict[str, Any]]
-    association_runner: Callable[[str, bool], dict[str, Any]]
-
-
-def _default_dbt_runner(entity: str, dry_run: bool) -> bool:
-    del entity
-    if dry_run:
-        return True
-    command = dbt_command()
-    if command is None:
-        raise RuntimeError("dbt boundary is not configured. Set ICALPS_DBT_COMMAND or inject a dbt hook.")
-    completed = subprocess.run(command, cwd=DBT_PROJECT_DIR, check=False)
-    return completed.returncode == 0
-
-
-def build_default_hooks() -> PipelineHooks:
-    from pipeline.associations import AssociationBridgeExecutor
-    from pipeline.bronze import DuckDBBronzeLoader
-    from pipeline.gold import GoldUpsertExecutor
-    from pipeline.silver import SilverNormaliser, SilverValidator
-    from pipeline.sync import StackSyncCheckpoint
-
-    gold_executor = GoldUpsertExecutor()
-    sync_checkpoint = StackSyncCheckpoint()
-    assoc_executor = AssociationBridgeExecutor()
-
-    return PipelineHooks(
-        bronze_loader_factory=DuckDBBronzeLoader,
-        silver_normaliser_factory=SilverNormaliser,
-        silver_validator_factory=SilverValidator,
-        dbt_runner=_default_dbt_runner,
-        gold_upserter=lambda entity, dry_run: gold_executor.execute(entity, dry_run=dry_run),
-        sync_waiter=lambda entity, dry_run: sync_checkpoint.wait(entity, dry_run=dry_run),
-        association_runner=lambda entity, dry_run: assoc_executor.execute(entity, dry_run=dry_run),
-    )
 
 
 def run(
@@ -255,15 +213,37 @@ def _run_silver_validate(ctx: PipelineContext, owner_blocking: bool, verbosity: 
 
 
 def _run_dbt(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+    """Deprecated DBT_BUILD stage — runs all dbt models for backwards compat.
+
+    The new parameterized dbt_runner signature means the legacy DBT_BUILD
+    call passes selector="" (meaning: all models). Phase 3 replaces this
+    with granular DBT_STAGING → DBT_INTERMEDIATE → DBT_MARTS transitions
+    using selectors from MANIFEST.yaml.
+    """
     if not _should_run(ctx, PipelineStage.DBT_BUILD, None):
         return
     if dry_run:
         transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SKIPPED, reason="dry_run")
         return
-    ok = hooks.dbt_runner(entity, dry_run)
-    if not ok:
-        transition(ctx, PipelineStage.DBT_BUILD, StageStatus.FAILED, reason="dbt_run_nonzero_exit")
-    transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SUCCESS)
+    result = hooks.dbt_runner(entity, "", "run", False)
+    if result.get("exit_code", 0) != 0 or result.get("failed", 0) > 0:
+        transition(
+            ctx,
+            PipelineStage.DBT_BUILD,
+            StageStatus.FAILED,
+            reason="dbt_run_nonzero_exit",
+            exit_code=result.get("exit_code"),
+            failed=result.get("failed", 0),
+            stderr_tail=result.get("stderr_tail", "")[:256],
+        )
+    transition(
+        ctx,
+        PipelineStage.DBT_BUILD,
+        StageStatus.SUCCESS,
+        nodes=result.get("nodes", 0),
+        passed=result.get("passed", 0),
+        duration_s=result.get("duration_s"),
+    )
 
 
 def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
@@ -304,19 +284,19 @@ def _run_assoc_validate(ctx: PipelineContext, entity: str, dry_run: bool, hooks:
 
 
 def _skip_stages_before(ctx: PipelineContext, resume_stage: PipelineStage) -> None:
-    ordered = [
-        PipelineStage.BRONZE_LOAD,
-        PipelineStage.BRONZE_METADATA,
-        PipelineStage.BRONZE_WATERMARK,
-        PipelineStage.BRONZE_EXPORT,
-        PipelineStage.SILVER_NORMALISE,
-        PipelineStage.SILVER_VALIDATE,
-        PipelineStage.DBT_BUILD,
-        PipelineStage.GOLD_UPSERT,
-        PipelineStage.STACKSYNC_SYNC,
-        PipelineStage.ASSOC_VALIDATE,
-    ]
-    for stage in ordered:
+    """Mark all stages before resume_stage as SKIPPED.
+
+    Iterates PipelineStage in enum-declaration order, comparing by .value.
+    This replaces the previous hardcoded list — adding a new stage to the
+    enum now automatically participates in resume semantics.
+
+    INIT / COMPLETE / FAILED are skipped here — they are terminal or
+    initial sentinels, not resumable work units.
+    """
+    terminal = {PipelineStage.INIT, PipelineStage.COMPLETE, PipelineStage.FAILED}
+    for stage in PipelineStage:
+        if stage in terminal:
+            continue
         if stage.value < resume_stage.value:
             transition(ctx, stage, StageStatus.SKIPPED, reason="resume")
 

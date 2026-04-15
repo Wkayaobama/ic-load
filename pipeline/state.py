@@ -12,58 +12,63 @@ from context.config import ARTIFACTS_DIR, load_thresholds as _load_thresholds
 class PipelineStage(Enum):
     """Stage boundaries in the pipeline.
 
-    Legacy stages (SILVER_NORMALISE, DBT_BUILD) are retained for backwards
-    compatibility with the existing runner.py. They are deprecated and
-    will be removed in Phase 2 of the migration plan (see
-    IC_Load_Production_Plan.md §11 Phase 2) once runner.py is rewired
-    to use the finer-grained DBT_* stages.
+    Enum values are sequential integers (via auto()); ordering in this file
+    determines execution order. The runner uses `stage.value < resume.value`
+    to decide which stages to skip on resume — no hardcoded stage list.
 
-    New stages introduced in Phase 1 scaffolding align with the hooks
-    defined in pipeline/hooks/ (one-to-one mapping; see §7.3 and §7.4
-    of the plan).
+    Legacy stages (SILVER_NORMALISE, DBT_BUILD) are retained for backwards
+    compatibility with the existing runner.py. They are deprecated and will
+    be removed in Phase 3 of the migration plan once dbt staging+intermediate
+    models fully replace the legacy silver normaliser.
+
+    Order matches IC_Load_Production_Plan.md §5.1 exactly.
     """
 
-    INIT = auto()
+    INIT = auto()                           # 1
 
-    # Phase 1 NEW — pg functions install (Contract A, §7.6)
-    PG_FUNCTIONS_INSTALL = auto()
+    # pg functions — Contract A (§7.6)
+    PG_FUNCTIONS_INSTALL = auto()           # 2
 
     # Bronze
-    BRONZE_LOAD = auto()
-    BRONZE_METADATA = auto()
-    BRONZE_WATERMARK = auto()
-    BRONZE_EXPORT = auto()
+    BRONZE_LOAD = auto()                    # 3
+    BRONZE_METADATA = auto()                # 4
+    BRONZE_WATERMARK = auto()               # 5
+    BRONZE_EXPORT = auto()                  # 6
 
     # Silver
-    SILVER_NORMALISE = auto()  # DEPRECATED — replaced by DBT_STAGING + DBT_INTERMEDIATE
-    SILVER_VALIDATE = auto()
+    SILVER_NORMALISE = auto()               # 7  DEPRECATED — replaced by DBT_STAGING + DBT_INTERMEDIATE
+    SILVER_VALIDATE = auto()                # 8
 
-    # dbt — Phase 1 NEW (replaces monolithic DBT_BUILD)
-    DBT_STAGING = auto()
-    DBT_INTERMEDIATE = auto()
-    DBT_TEST_SILVER = auto()
-    DBT_MARTS = auto()
-    DBT_TEST_MARTS = auto()
-    DBT_BUILD = auto()  # DEPRECATED — kept for backwards compat
+    # dbt silver-layer stages (new, granular)
+    DBT_STAGING = auto()                    # 9
+    DBT_INTERMEDIATE = auto()               # 10
+    DBT_TEST_SILVER = auto()                # 11
 
-    # Entity postprocess — Phase 1 NEW (MANIFEST-driven dispatcher)
-    ENTITY_POSTPROCESS_PRE = auto()
-    ENTITY_POSTPROCESS_POST = auto()
+    # Entity-specific pre-marts postprocess (MANIFEST-driven)
+    ENTITY_POSTPROCESS_PRE = auto()         # 12
+
+    # dbt marts
+    DBT_MARTS = auto()                      # 13
+    DBT_TEST_MARTS = auto()                 # 14
+    DBT_BUILD = auto()                      # 15 DEPRECATED — monolithic predecessor to the DBT_* stages above
 
     # Guardrails + Gold
-    DEDUPE_GUARD = auto()
-    GOLD_VALIDATE = auto()
-    GOLD_UPSERT = auto()
+    DEDUPE_GUARD = auto()                   # 16
+    GOLD_VALIDATE = auto()                  # 17
+    GOLD_UPSERT = auto()                    # 18
 
     # Sync + Associations
-    STACKSYNC_SYNC = auto()
-    ASSOC_VALIDATE = auto()
+    STACKSYNC_SYNC = auto()                 # 19
+    ASSOC_VALIDATE = auto()                 # 20
 
-    # Phase 1 NEW — post-run verification
-    POST_RUN_VERIFY = auto()
+    # Entity-specific post-assoc postprocess (MANIFEST-driven)
+    ENTITY_POSTPROCESS_POST = auto()        # 21
 
-    COMPLETE = auto()
-    FAILED = auto()
+    # Post-run verification (coverage report)
+    POST_RUN_VERIFY = auto()                # 22
+
+    COMPLETE = auto()                       # 23
+    FAILED = auto()                         # 24
 
 
 class StageStatus(Enum):
