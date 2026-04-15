@@ -1,0 +1,73 @@
+"""
+Stage: SILVER_VALIDATE
+Hook:  silver_validator_factory (PipelineHooks.silver_validator_factory)
+
+What it does
+------------
+Runs the silver-layer assertion suite defined in
+ValidationRules/icalps_crm_schema.yaml. Each assertion has a severity:
+STOP assertions block the pipeline on failure; WARN assertions let the
+run continue in WARNING state.
+
+This is the ONLY stage that reads ValidationRules/. Confirms that
+contract (IC_Load_Production_Plan.md §9.1) — moving the file elsewhere
+breaks this stage.
+
+Upstream assumptions (must be SUCCESS before this stage)
+--------------------------------------------------------
+- BRONZE_EXPORT → staging.stg_{entity} populated
+- DBT_INTERMEDIATE → int_{entity}_reconciled materialized
+
+Writes / side effects
+---------------------
+- Reads: staging.stg_{entity}_normalised, int_{entity}_reconciled,
+  ValidationRules/icalps_crm_schema.yaml.
+- No DB writes.
+- Appends stage block to log with validation.{stop_count,warn_count,...}.
+- Updates ctx.metadata["validation"] with STOP/WARN check names.
+
+Common failure modes and diagnosis
+----------------------------------
+- STOP severity failure (FAILED transition)
+    → The log's `stop_check_names=[...]` lists the specific assertions.
+      Each assertion name is defined in ValidationRules/icalps_crm_schema.yaml.
+      Look up the name there to understand what was asserted and why it
+      failed. Typical causes: reconciliation rate collapse, required
+      field NULL rate jump, primary key duplicate.
+
+- WARN severity failure (WARNING transition, run continues)
+    → Same diagnostic path. These usually indicate drift that's worth
+      watching but not blocking. owner_warn_count > 0 is the common case:
+      owners exist in legacy but haven't been resolved to HubSpot users yet.
+      Flip thresholds.owner_resolution_blocking=true in context/config.py
+      to escalate owner warnings to STOP.
+
+Re-running
+----------
+Idempotent (read-only). Re-running from SILVER_VALIDATE after fixing
+upstream data is the primary debug loop:
+    python -m pipeline.runner --entity {X} --resume-from SILVER_VALIDATE
+
+Phase 1 notes
+-------------
+silver_validator_factory below is a direct reference to the existing
+pipeline.silver.SilverValidator class. No wrapping required.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+
+def silver_validator_factory() -> Any:
+    """Return a SilverValidator instance.
+
+    Phase 2 will replace this with direct import:
+        from pipeline.silver import SilverValidator
+        silver_validator_factory = SilverValidator
+    """
+    raise NotImplementedError(
+        "pipeline.hooks.silver_validator.silver_validator_factory — "
+        "Phase 1 scaffolding. Phase 2: replace with "
+        "`from pipeline.silver import SilverValidator; "
+        "silver_validator_factory = SilverValidator`."
+    )
