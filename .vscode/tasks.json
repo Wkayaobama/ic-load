@@ -1,0 +1,142 @@
+{
+  "version": "2.0.0",
+  "// purpose": "Runnable pipeline commands. Cmd+Shift+P → 'Tasks: Run Task'. See docs/TRACEABILITY.md §4.",
+  "tasks": [
+    {
+      "label": "pipeline: runner (entity, full)",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "pipeline.runner", "--entity", "${input:entity}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "build",
+      "detail": "Run the full pipeline for a single entity."
+    },
+    {
+      "label": "pipeline: runner (dry-run)",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "pipeline.runner", "--entity", "${input:entity}", "--dry-run"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "build",
+      "detail": "Dry-run — skips any write stage."
+    },
+    {
+      "label": "pipeline: resume from stage",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "pipeline.runner", "--entity", "${input:entity}", "--resume-from", "${input:resumeStage}"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "build",
+      "detail": "Resume from a specific PipelineStage — loads the latest artifact for the entity."
+    },
+    {
+      "label": "pipeline: assoc-only",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "pipeline.runner", "--entity", "${input:entity}", "--assoc-only"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "build",
+      "detail": "Run ASSOC_VALIDATE only — post-StackSync re-resolve."
+    },
+    {
+      "label": "pipeline: silver-only (dry-run)",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "pipeline.runner", "--entity", "${input:entity}", "--silver-only", "--dry-run"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "build",
+      "detail": "Render SILVER_NORMALISE + SILVER_VALIDATE — no writes."
+    },
+    {
+      "label": "dbt: run failing model",
+      "type": "shell",
+      "command": "dbt",
+      "args": ["run", "--select", "${input:model}", "--full-refresh"],
+      "options": { "cwd": "${workspaceFolder}/dbt" },
+      "problemMatcher": [],
+      "group": "test",
+      "detail": "Re-run a single dbt model in isolation — see docs/TRACEABILITY.md §4.1."
+    },
+    {
+      "label": "dbt: test failing model",
+      "type": "shell",
+      "command": "dbt",
+      "args": ["test", "--select", "${input:model}"],
+      "options": { "cwd": "${workspaceFolder}/dbt" },
+      "problemMatcher": [],
+      "group": "test",
+      "detail": "Run tests for a specific model."
+    },
+    {
+      "label": "dbt: debug (connection check)",
+      "type": "shell",
+      "command": "dbt",
+      "args": ["debug"],
+      "options": { "cwd": "${workspaceFolder}/dbt" },
+      "problemMatcher": [],
+      "group": "test",
+      "detail": "Verify dbt profile + Postgres connectivity."
+    },
+    {
+      "label": "pipeline: open latest artifact",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-c",
+        "from pathlib import Path; import os; d = Path('artifacts'); f = sorted(d.glob('pipeline_run_*.json'))[-1] if d.exists() else None; print(f); os.system(f'code {f}') if f else print('no artifacts')"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "detail": "Open the most recent run artifact JSON in an editor tab."
+    }
+  ],
+  "inputs": [
+    {
+      "id": "entity",
+      "type": "pickString",
+      "description": "Entity to run",
+      "options": ["company", "contact", "opportunity", "communication", "case"],
+      "default": "company"
+    },
+    {
+      "id": "resumeStage",
+      "type": "pickString",
+      "description": "Resume from stage (PipelineStage enum value)",
+      "options": [
+        "PG_FUNCTIONS_INSTALL",
+        "BRONZE_LOAD",
+        "BRONZE_METADATA",
+        "BRONZE_WATERMARK",
+        "BRONZE_EXPORT",
+        "SILVER_NORMALISE",
+        "SILVER_VALIDATE",
+        "DBT_STAGING",
+        "DBT_INTERMEDIATE",
+        "DBT_TEST_SILVER",
+        "ENTITY_POSTPROCESS_PRE",
+        "DBT_MARTS",
+        "DBT_TEST_MARTS",
+        "DBT_BUILD",
+        "DEDUPE_GUARD",
+        "GOLD_VALIDATE",
+        "GOLD_UPSERT",
+        "STACKSYNC_SYNC",
+        "ASSOC_VALIDATE",
+        "ENTITY_POSTPROCESS_POST",
+        "POST_RUN_VERIFY"
+      ],
+      "default": "GOLD_UPSERT"
+    },
+    {
+      "id": "model",
+      "type": "promptString",
+      "description": "dbt model name (without .sql)",
+      "default": "fct_company_silver"
+    }
+  ]
+}
