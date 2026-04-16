@@ -15,12 +15,16 @@
 #
 # See IC_Load_Production_Plan.md §10 for the design rationale.
 
-version: "3.0"
-last_updated: "2026-04-15"
-phase_status: "Phase 1 scaffolding — hooks raise NotImplementedError until Phase 2"
+version: "3.1"
+last_updated: "2026-04-16"
+phase_status: "pg functions + hierarchy CTEs implemented; pg_functions.install hook live"
 
 # pg function files installed by PG_FUNCTIONS_INSTALL.
-# These files DO NOT EXIST YET — Phase 3 of the migration plan creates them.
+# Schema setup (sql/silver/00_hierarchy_schema.sql) runs first via the
+# hook's _SCHEMA_SETUP_FILES list — NOT listed here because it creates
+# tables, not functions. This list is functions only.
+#
+# 11 transformation functions (staging.fn_*):
 pg_functions:
   - sql/functions/fn_clean_utf8.sql
   - sql/functions/fn_clean_html.sql
@@ -33,6 +37,11 @@ pg_functions:
   - sql/functions/fn_map_contact_status.sql
   - sql/functions/fn_map_country_iso.sql
   - sql/functions/fn_map_lifecycle_stage.sql
+  # 4 hierarchy functions (silver.fn_*):
+  - sql/functions/fn_build_communication_hierarchy.sql
+  - sql/functions/fn_build_company_tree.sql
+  - sql/functions/fn_traverse_hierarchy.sql
+  - sql/functions/fn_get_hierarchy_json.sql
 
 # Per-entity registration — identifiers, dbt selectors, SQL files,
 # postprocess entries. No stages listed (they are fixed in
@@ -53,8 +62,9 @@ entities:
       post_run_verify:    sql/company/10_post_run_verify.sql
     postprocess:
       post:
-        - { type: python, module: pipeline.hierarchy, fn: run,
-            note: "Native COMPANY domain-trick hierarchy (Phase 2)" }
+        - { type: sql_call,
+            call: "SELECT * FROM silver.fn_build_company_tree('staging', 'v_company_with_parent', true)",
+            note: "Recursive company hierarchy with cycle detection. Requires staging.v_company_with_parent view (resolves parent_company_id from HubSpot associations)." }
 
   contact:
     gold_table: hubspot.contacts
@@ -102,9 +112,10 @@ entities:
       association_bridge: sql/communication/09_association_bridge.sql
       post_run_verify:    sql/communication/10_post_run_verify.sql
     postprocess:
-      post:
-        - { type: python, module: pipeline.unflatten, fn: run,
-            note: "Recursive BFS graph traversal" }
+      pre:
+        - { type: sql_call,
+            call: "SELECT * FROM silver.fn_build_communication_hierarchy('staging', 'stg_communication_normalised', true)",
+            note: "Three-level hierarchy unflattening (Company → Person → Communication). Replaces pipeline/unflatten.py BFS. Runs pre-marts so dbt fct_* models can reference silver.communication_hierarchy." }
 
   case:
     gold_table: hubspot.tickets
@@ -128,11 +139,16 @@ entities:
 
 # Algorithms that stay in Python (non-negotiable safety or complex logic).
 # See IC_Load_Production_Plan.md §2 for rationale per entry.
+# Algorithms that stay in Python — NOT translatable to SQL.
+# deal_stage_mapper: SQL CASE returns NULL on unmapped; Python raises ValueError (safety).
+# levenshtein_dedup: threshold-band bucketing + artifact JSON; pg_trgm is partial.
+#
+# MIGRATED TO SQL (no longer Python-only):
+#   unflatten_hierarchy → silver.fn_build_communication_hierarchy (3-level JOINs)
+#   company_hierarchy   → silver.fn_build_company_tree (WITH RECURSIVE CTE)
 python_only_algorithms:
   - { name: "deal_stage_mapper",   file: "context/algorithms/deal_stage_mapper.py",
       reason: "non-negotiable safety; raises ValueError on unmapped" }
-  - { name: "unflatten_hierarchy", file: "pipeline/unflatten.py",
-      reason: "recursive BFS graph traversal" }
   - { name: "levenshtein_dedup",   file: "pipeline/dedupe.py",
       reason: "complex scoring with threshold bands" }
 
