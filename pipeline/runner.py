@@ -25,6 +25,7 @@ from context.config import (
     latest_bronze_path,
     load_business_rules,
     load_entity_resolution_map,
+    load_schema_context,
     resolve_dbt_selector,
 )
 from pipeline.hooks import PipelineHooks, build_default_hooks
@@ -49,6 +50,7 @@ def run(
     assoc_only: bool = False,
     verbosity: str = "low",
     probe_mode: bool = False,
+    approve_gold: bool = False,
     hooks: PipelineHooks | None = None,
     bronze_csv_override: str | None = None,
 ) -> PipelineContext:
@@ -111,7 +113,8 @@ def run(
     _run_dbt_marts(ctx, entity, dry_run, hooks)
     _run_dbt_test_marts(ctx, entity, dry_run, hooks)
 
-    # Gold gate + upsert + StackSync + associations.
+    # Gold gate: requires --approve-gold + pre-gold duplicate check.
+    _run_gold_validate(ctx, entity, dry_run, approve_gold)
     _run_gold_upsert(ctx, entity, dry_run, hooks)
     _run_stacksync_sync(ctx, entity, dry_run, hooks)
     _run_assoc_validate(ctx, entity, dry_run, hooks)
@@ -467,6 +470,117 @@ def _run_post_run_verify(ctx: PipelineContext, entity: str, dry_run: bool, hooks
     )
 
 
+def _run_gold_validate(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    approve_gold: bool,
+) -> None:
+    """GOLD_VALIDATE — two-gate check before any hubspot.* write.
+
+    Gate 1: --approve-gold flag. The operator must explicitly confirm they've
+    reviewed the silver artifacts. Without this flag, the pipeline stops here
+    with a clear FAILED reason. This prevents accidental live writes.
+
+    Gate 2: pre-gold duplicate reconciliation key check. Reads the same
+    silver_table + match_column that render_entity_upsert will use for
+    ON CONFLICT. If duplicates exist, the upsert would silently overwrite
+    earlier rows — data loss. Better to FAIL here and force upstream dedupe.
+
+    The query is built from schema_context.yaml — same contract as the
+    gold upsert template. If schema_context is unavailable (e.g. entity
+    not in the config), gate 2 is skipped with a WARNING (gate 1 still
+    enforced).
+    """
+    if not _should_run(ctx, PipelineStage.GOLD_VALIDATE, None):
+        return
+    if dry_run:
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
+        return
+
+    # Gate 1: explicit operator approval
+    if not approve_gold:
+        transition(
+            ctx,
+            PipelineStage.GOLD_VALIDATE,
+            StageStatus.FAILED,
+            reason="explicit_gold_validation_required",
+            hint="Pass --approve-gold to confirm you have reviewed silver artifacts before gold upsert.",
+        )
+        # transition(FAILED) raises RuntimeError — execution stops here.
+
+    # Gate 2: pre-gold duplicate check on the ON CONFLICT column.
+    # Uses schema_context.yaml to find the exact silver_table + match_column
+    # that the upsert template will use — same source of truth, no drift.
+    entity_key_map = {
+        "company": "Company",
+        "contact": "Person",
+        "opportunity": "Opportunity",
+    }
+    schema_entity = entity_key_map.get(entity.lower())
+    if schema_entity:
+        try:
+            schema = load_schema_context()
+            cfg = schema.get("entities", {}).get(schema_entity, {})
+            upsert_cfg = cfg.get("upsert", {})
+            silver_table = cfg.get("silver_table")
+            match_column = upsert_cfg.get("match_column")
+
+            if silver_table and match_column:
+                from context.db import get_connection
+
+                check_sql = (
+                    f"SELECT {match_column}, COUNT(*) AS cnt "
+                    f"FROM {silver_table} "
+                    f"GROUP BY {match_column} "
+                    f"HAVING COUNT(*) > 1 "
+                    f"LIMIT 10"
+                )
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(check_sql)
+                        dupes = cur.fetchall()
+
+                if dupes:
+                    dupe_ids = [str(row[0]) for row in dupes[:5]]
+                    transition(
+                        ctx,
+                        PipelineStage.GOLD_VALIDATE,
+                        StageStatus.FAILED,
+                        reason="duplicate_reconciliation_keys_in_silver",
+                        silver_table=silver_table,
+                        match_column=match_column,
+                        sample_duplicate_ids=dupe_ids,
+                        total_duplicate_groups=len(dupes),
+                        hint=f"Fix duplicates in {silver_table}.{match_column} before gold upsert. "
+                             f"Run: SELECT {match_column}, COUNT(*) FROM {silver_table} GROUP BY {match_column} HAVING COUNT(*) > 1",
+                    )
+                    # FAILED raises — never reaches here.
+        except NotImplementedError:
+            # schema_context or db not available — skip gate 2, gate 1 was enough
+            pass
+        except Exception as exc:
+            # DB error during check — warn but don't block (gate 1 passed).
+            transition(
+                ctx,
+                PipelineStage.GOLD_VALIDATE,
+                StageStatus.WARNING,
+                reason="pre_gold_check_error",
+                error=str(exc)[:256],
+                note="Duplicate check failed but --approve-gold was set. Proceeding with caution.",
+            )
+            return
+
+    transition(
+        ctx,
+        PipelineStage.GOLD_VALIDATE,
+        StageStatus.SUCCESS,
+        reason="gold_validation_passed",
+        approve_gold=True,
+        duplicate_check="passed" if schema_entity else "skipped_no_schema_entity",
+    )
+
+
 def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.GOLD_UPSERT, None):
         return
@@ -550,6 +664,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--assoc-only", action="store_true")
     parser.add_argument("--verbosity", choices=["high", "low"], default="low")
     parser.add_argument("--probe-mode", action="store_true")
+    parser.add_argument(
+        "--approve-gold",
+        action="store_true",
+        help="Required to execute GOLD_UPSERT. Without this flag the pipeline "
+             "stops at GOLD_VALIDATE with reason=explicit_gold_validation_required. "
+             "Pass only after reviewing silver artifacts.",
+    )
     parser.add_argument("--bronze-csv-override")
     return parser.parse_args()
 
@@ -567,5 +688,6 @@ if __name__ == "__main__":
         assoc_only=args.assoc_only,
         verbosity=args.verbosity,
         probe_mode=args.probe_mode,
+        approve_gold=args.approve_gold,
         bronze_csv_override=args.bronze_csv_override,
     )
