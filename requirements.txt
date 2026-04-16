@@ -1,5 +1,15 @@
+# IC_Load pipeline — Python dependencies
+#
+# Core runtime (required for all pipeline stages)
 duckdb
 pandas
 psycopg2-binary
 PyYAML
+
+# dbt (required for DBT_STAGING through DBT_TEST_MARTS — 5 stages)
+# dbt-postgres pulls in dbt-core + dbt-adapters automatically.
+# The pipeline invokes dbt via subprocess (must be on PATH).
+dbt-postgres
+
+# Testing
 pytest
