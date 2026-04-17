@@ -42,6 +42,8 @@ pg_functions:
   - sql/functions/fn_build_company_tree.sql
   - sql/functions/fn_traverse_hierarchy.sql
   - sql/functions/fn_get_hierarchy_json.sql
+  # Form workflow — FK chain resolution (StackSync workflow data path)
+  - sql/functions/fn_resolve_association.sql
 
 # Per-entity registration — identifiers, dbt selectors, SQL files,
 # postprocess entries. No stages listed (they are fixed in
