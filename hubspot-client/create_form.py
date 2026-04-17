@@ -380,7 +380,9 @@ def main() -> int:
                              f"Production (9201667) requires confirmation.")
     parser.add_argument("--form-guid", type=str, default=None)
     parser.add_argument("--schema-csv", type=pathlib.Path,
-                        default=pathlib.Path(__file__).resolve().parents[1] / "schema" / "opportunity.csv")
+                        default=pathlib.Path(__file__).resolve().parent / "schema" / "opportunity.csv",
+                        help="CSV with 'Canonical Field (Vault)' column. "
+                             "Available: schema/company.csv, schema/contact.csv, schema/opportunity.csv")
     parser.add_argument("--yes", action="store_true")
     parser.add_argument("--capability-threshold", type=int, default=85)
     args = parser.parse_args()
