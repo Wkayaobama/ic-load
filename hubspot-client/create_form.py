@@ -29,7 +29,10 @@ from typing import Any
 
 import requests
 
-from config import get_headers, FORMS_API_V2, PROPERTIES_API, PIPELINES_API
+from config import (
+    get_headers, FORMS_API_V2, PROPERTIES_API, PIPELINES_API,
+    SANDBOX_PORTAL_ID, IS_SANDBOX, require_production_confirmation,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -372,13 +375,21 @@ def main() -> int:
         "deal-creation-preflight", "deal-creation-form",
         "create-deal-native-from-icalps",
     ], default="create")
-    parser.add_argument("--portal-id", type=str, required=True)
+    parser.add_argument("--portal-id", type=str, default=SANDBOX_PORTAL_ID,
+                        help=f"HubSpot portal ID. Defaults to sandbox ({SANDBOX_PORTAL_ID}). "
+                             f"Production (9201667) requires confirmation.")
     parser.add_argument("--form-guid", type=str, default=None)
     parser.add_argument("--schema-csv", type=pathlib.Path,
                         default=pathlib.Path(__file__).resolve().parents[1] / "schema" / "opportunity.csv")
     parser.add_argument("--yes", action="store_true")
     parser.add_argument("--capability-threshold", type=int, default=85)
     args = parser.parse_args()
+
+    # Production gate — sandbox passes through; production requires explicit confirmation.
+    require_production_confirmation(args.portal_id)
+
+    env_label = "SANDBOX" if IS_SANDBOX else "PRODUCTION"
+    print(f"  Environment: {env_label} (portal {args.portal_id})\n")
 
     if args.mode == "create":
         _confirm_or_abort(f"CREATE a new form in portal {args.portal_id}.", args.yes)
