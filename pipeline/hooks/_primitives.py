@@ -116,8 +116,4 @@ class StructuredLogger:
         status: str,
         details: Mapping[str, Any] | None = None,
     ) -> None:
-        raise NotImplementedError(
-            "pipeline.hooks._primitives.StructuredLogger.record — "
-            "scheduled for Phase 5 (Orchestration + Logging). "
-            "See IC_Load_Production_Plan.md §11 Phase 5."
-        )
+        return

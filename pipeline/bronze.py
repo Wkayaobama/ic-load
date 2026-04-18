@@ -61,7 +61,7 @@ class DuckDBBronzeLoader:
             self.conn.execute(
                 f"""
                 ALTER TABLE {table_name}
-                ADD COLUMN IF NOT EXISTS _bronze_source_file VARCHAR DEFAULT '{source_file}'
+                ADD COLUMN IF NOT EXISTS _bronze_source_file VARCHAR DEFAULT '{source_file.replace("'", "''")}'
                 """
             )
         except Exception:

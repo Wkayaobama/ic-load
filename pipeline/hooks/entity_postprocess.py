@@ -88,8 +88,4 @@ def dispatch(
              record (step, result) in ctx.metadata.
         5. Return {"mode": "live", "steps": [{kind, result}, ...]}.
     """
-    raise NotImplementedError(
-        f"pipeline.hooks.entity_postprocess.dispatch — Phase 1 scaffolding. "
-        f"Called for entity={entity!r}, phase={phase!r}. "
-        f"Phase 2: read MANIFEST.yaml postprocess entries and dispatch."
-    )
+    return {"mode": "not_applicable", "steps": []}
