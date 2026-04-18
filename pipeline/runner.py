@@ -497,6 +497,9 @@ def _run_gold_validate(
     if dry_run:
         transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
         return
+    if ctx.metadata.get("probe_mode"):
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="probe_mode")
+        return
 
     # Gate 1: explicit operator approval
     if not approve_gold:

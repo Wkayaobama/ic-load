@@ -39,7 +39,7 @@ def test_warning_only_probe_reaches_dbt_gold_sync_and_assoc():
         )
 
     stages = [entry["to"] for entry in ctx.history]
-    assert "DBT_BUILD" in stages
+    assert "DBT_STAGING" in stages
     assert "GOLD_UPSERT" in stages
     assert "STACKSYNC_SYNC" in stages
     assert "ASSOC_VALIDATE" in stages
@@ -59,10 +59,15 @@ def test_stop_validation_prevents_dbt_gold_sync_and_assoc():
         bronze_loader_factory=probe_hooks.bronze_loader_factory,
         silver_normaliser_factory=probe_hooks.silver_normaliser_factory,
         silver_validator_factory=_StopValidator,
+        pg_functions_installer=probe_hooks.pg_functions_installer,
         dbt_runner=probe_hooks.dbt_runner,
+        entity_postprocessor=probe_hooks.entity_postprocessor,
+        dedupe_guarder=probe_hooks.dedupe_guarder,
         gold_upserter=probe_hooks.gold_upserter,
         sync_waiter=probe_hooks.sync_waiter,
         association_runner=probe_hooks.association_runner,
+        post_run_verifier=probe_hooks.post_run_verifier,
+        sql_file_runner=probe_hooks.sql_file_runner,
     )
 
     with patch("pipeline.state.ARTIFACTS_DIR", tmp_path):

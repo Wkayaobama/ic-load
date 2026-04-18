@@ -58,10 +58,15 @@ def make_probe_hooks(*, warning_only: bool = False) -> PipelineHooks:
         bronze_loader_factory=_ProbeBronzeLoader,
         silver_normaliser_factory=_ProbeNormaliser,
         silver_validator_factory=lambda: _ProbeValidator(warning_only=warning_only),
-        dbt_runner=lambda entity, dry_run: True,
+        pg_functions_installer=lambda dry_run: {"installed": [], "duration_s": 0},
+        dbt_runner=lambda entity, selector, mode, dry_run: {},
+        entity_postprocessor=lambda entity, phase, dry_run: {"mode": "not_applicable"},
+        dedupe_guarder=lambda entity, dry_run: {},
         gold_upserter=lambda entity, dry_run: {"entity": entity, "mode": "probe", "statements": [{"file": "probe.sql"}]},
         sync_waiter=lambda entity, dry_run: {"entity": entity, "synced": True, "mode": "probe"},
         association_runner=lambda entity, dry_run: {"entity": entity, "mode": "probe", "statements": [{"file": "probe_assoc.sql"}]},
+        post_run_verifier=lambda entity, dry_run: {"reconciliation_rate": 1.0, "association_coverage": 1.0, "warnings": []},
+        sql_file_runner=lambda path, params, dry_run: {},
     )
 
 
