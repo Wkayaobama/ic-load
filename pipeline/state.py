@@ -36,7 +36,7 @@ class PipelineStage(Enum):
     BRONZE_EXPORT = auto()                  # 6
 
     # Silver
-    SILVER_NORMALISE = auto()               # 7  DEPRECATED — replaced by DBT_STAGING + DBT_INTERMEDIATE
+    SILVER_NORMALISE = auto()               # 7
     SILVER_VALIDATE = auto()                # 8
 
     # dbt silver-layer stages (new, granular)

@@ -37,6 +37,8 @@ pg_functions:
   - sql/functions/fn_map_contact_status.sql
   - sql/functions/fn_map_country_iso.sql
   - sql/functions/fn_map_lifecycle_stage.sql
+  - sql/functions/fn_map_language_iso.sql
+  - sql/functions/fn_normalize_currency.sql
   # 4 hierarchy functions (silver.fn_*):
   - sql/functions/fn_build_communication_hierarchy.sql
   - sql/functions/fn_build_company_tree.sql
