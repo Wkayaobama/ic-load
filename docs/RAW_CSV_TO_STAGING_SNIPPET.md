@@ -6,8 +6,8 @@ This snippet formalizes the reusable path from:
 
 Implementation:
 
-- [`raw_to_staging_snippet.py`](/c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/raw_to_staging_snippet.py)
-- [`text_normalization.py`](/c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/text_normalization.py)
+- [`raw_to_staging_snippet.py`](pipeline/raw_to_staging_snippet.py)
+- [`text_normalization.py`](pipeline/text_normalization.py)
 
 ## What It Covers
 
@@ -57,6 +57,6 @@ need a clean entity-specific staging path such as `Case -> Ticket`.
 
 The existing CLI orchestration entry points remain:
 
-- [`runner.py`](/c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/runner.py)
-- [`probe.py`](/c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/probe.py)
-- [`live_smoke.py`](/c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/live_smoke.py)
+- [`runner.py`](pipeline/runner.py)
+- [`probe.py`](pipeline/probe.py)
+- [`live_smoke.py`](pipeline/live_smoke.py)

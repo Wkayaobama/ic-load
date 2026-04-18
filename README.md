@@ -56,7 +56,7 @@ The raw-to-staging snippet is the reusable primitive for:
 - reshaping columns into a PostgreSQL staging contract
 - writing only to the named staging table when explicitly requested
 
-See [docs/RAW_CSV_TO_STAGING_SNIPPET.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/RAW_CSV_TO_STAGING_SNIPPET.md).
+See [docs/RAW_CSV_TO_STAGING_SNIPPET.md](docs/RAW_CSV_TO_STAGING_SNIPPET.md).
 
 ## Shared Normalization Rules
 
@@ -97,8 +97,8 @@ Repomix must exclude:
 The repo is set up so a fresh Codespace can validate the salvage spine without
 a local env-file.
 
-- install uses [requirements.txt](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/requirements.txt)
-- post-create runs [scripts/codespace-smoke.sh](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/scripts/codespace-smoke.sh)
+- install uses [requirements.txt](requirements.txt)
+- post-create runs [scripts/codespace-smoke.sh](scripts/codespace-smoke.sh)
 - repository-level Codespaces secrets should provide live PostgreSQL credentials when needed
 - the default remote-safe path remains the orchestration probe and staging-only smoke, not Gold-layer writes
 
@@ -122,7 +122,7 @@ The intended repo-root layout is:
 - `context/`
 - `pipeline/`
 - `sql/`
-- `dbt/`
+- `dbt/` — placeholder only; see `dbt/README.md` (dbt connection is Area 2 scope)
 - `tests/`
 - `ValidationRules/`
 - `GomplateRepoMix/`

@@ -81,7 +81,7 @@ this table to walk from stage name → hook module → diagnostic tool/query.
 | `PG_FUNCTIONS_INSTALL` | `pipeline/hooks/pg_functions.py` | Database Client | `SELECT routine_name FROM information_schema.routines WHERE routine_schema = 'staging';` |
 | `BRONZE_LOAD` | `pipeline/hooks/bronze.py` | File explorer | Verify CSV exists at `$BRONZE_CSV_DIR`; filename matches `Bronze_{Entity}.csv` |
 | `BRONZE_EXPORT` | `pipeline/hooks/bronze.py` | Database Client | `SELECT COUNT(*) FROM staging.stg_{entity};` — should match log `row_count` |
-| `SILVER_NORMALISE` | `pipeline/silver.py` (legacy) | Database Client | Inspect `staging.stg_{entity}_normalised`; compare row count to bronze |
+| `SILVER_NORMALISE` | `pipeline/silver.py` (legacy — **DEPRECATED**, remove after dbt migration) | Database Client | Inspect `staging.stg_{entity}_normalised`; compare row count to bronze |
 | `SILVER_VALIDATE` | `pipeline/hooks/silver_validator.py` | YAML editor | Open `ValidationRules/icalps_crm_schema.yaml`; search for the assertion named in `stop_check_names[0]` |
 | `DBT_STAGING` / `DBT_INTERMEDIATE` / `DBT_MARTS` | `pipeline/hooks/dbt.py` | dbt Power User | Open the failing model, "Compile current model", paste into Database Client |
 | `DBT_TEST_SILVER` / `DBT_TEST_MARTS` | `pipeline/hooks/dbt.py` | dbt Power User | Right-click failed test → "Run test"; inspect `dbt/target/run_results.json` |
