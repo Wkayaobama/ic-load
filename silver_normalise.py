@@ -26,20 +26,12 @@ Usage:
 from __future__ import annotations
 
 import re
-import sys
-from pathlib import Path
 from typing import Optional
 
 import duckdb
 import pandas as pd
 
-_HERE = Path(__file__).parent
-_IC_LOAD = _HERE.parent.parent
-for _p in [str(_IC_LOAD), str(_HERE)]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-from ic_load_pipeline.python.db import get_connection  # noqa: E402
+from context.db import get_connection
 
 
 # ---------------------------------------------------------------------------

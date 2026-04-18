@@ -25,22 +25,15 @@ Usage:
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 import pandas as pd
 
-_HERE = Path(__file__).parent
-_IC_LOAD = _HERE.parent.parent
-for _p in [str(_IC_LOAD), str(_HERE)]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+from context.db import get_connection
 
-from ic_load_pipeline.python.db import get_connection  # noqa: E402
-
-ARTIFACTS_DIR = _IC_LOAD / "artifacts"
+ARTIFACTS_DIR = Path(__file__).parent / "artifacts"
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
 Severity = Literal["STOP", "WARN", "INFO"]

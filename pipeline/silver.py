@@ -7,7 +7,7 @@ from typing import Any
 
 from context.config import PROJECT_ROOT
 
-_LEGACY_ROOT = PROJECT_ROOT.parent / "ic_load_pipeline" / "python-ignorethis"
+_LEGACY_ROOT = PROJECT_ROOT
 
 
 def _load_legacy_module(module_name: str, filename: str) -> ModuleType:
