@@ -14,10 +14,10 @@ import yaml
 # The only path contract collaborators should rely on is "repo root contains
 # context/, pipeline/, sql/, ValidationRules/, and GomplateRepoMix/".
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+ARTIFACTS_DIR = Path(os.getenv("PIPELINE_ARTIFACTS_DIR", str(PROJECT_ROOT / "artifacts")))
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
-BRONZE_DIR = PROJECT_ROOT / "bronze_layer"
+BRONZE_DIR = Path(os.getenv("BRONZE_CSV_DIR", str(PROJECT_ROOT / "bronze_layer")))
 DBT_PROJECT_DIR = PROJECT_ROOT / "dbt"
 VALIDATION_SCHEMA_PATH = PROJECT_ROOT / "ValidationRules" / "icalps_crm_schema.yaml"
 SCHEMA_CONTEXT_PATH = PROJECT_ROOT / "GomplateRepoMix" / "schema_context.yaml"
@@ -30,9 +30,10 @@ BENCHMARK_DIR = PROJECT_ROOT.parent / "benchmark"
 
 _BRONZE_PREFIX = {
     "communication": "Bronze_Communication",
-    "company": "Bronze_Company",
-    "contact": "Bronze_Person",
-    "opportunity": "Bronze_Opportunity",
+    "company":       "Bronze_Company",
+    "contact":       "Bronze_Person",
+    "opportunity":   "Bronze_Opportunity",
+    "case":          "Bronze_Case",
 }
 
 
@@ -69,6 +70,12 @@ ENTITIES: dict[str, EntityConfig] = {
         bronze_csv="Bronze_Opportunity.csv",
         staging_table="stg_opportunity",
         primary_key="Oppo_OpportunityId",
+    ),
+    "case": EntityConfig(
+        name="case",
+        bronze_csv="Bronze_Case.csv",
+        staging_table="stg_case",
+        primary_key="Case_CaseId",
     ),
 }
 
