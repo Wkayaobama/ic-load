@@ -13,3 +13,4 @@ __pycache__/
 pytest-cache-files*/
 tmp*/
 sql/rendered/test_output/
+*/JL/
