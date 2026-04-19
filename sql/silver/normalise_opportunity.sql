@@ -47,8 +47,8 @@ WITH ranked AS (
         -- Cost: strip currency symbols, normalise decimal
         staging.fn_normalize_currency("Oppo_Cost"::text)            AS icalps_cost,
 
-        -- Forecast and certainty
-        CAST("Oppo_Forecast" AS double precision)                   AS icalps_forecast,
+        -- Forecast and certainty (source is absolute €; divide by 1000 → k€ per schema contract)
+        CAST("Oppo_Forecast" AS double precision) / 1000.0          AS icalps_forecast,
         CAST("Oppo_Certainty" AS double precision)                  AS icalps_certainty,
 
         -- Computed columns
