@@ -185,6 +185,8 @@ def _run_silver(
     if _should_run(ctx, PipelineStage.SILVER_VALIDATE, None):
         if skip_validation:
             transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SKIPPED, reason="skip_validation_flag")
+        elif dry_run:
+            transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
         else:
             _run_silver_validate(ctx, owner_blocking, verbosity, hooks)
 
