@@ -17,7 +17,7 @@ the stage transitions to SKIPPED.
 
 Upstream assumptions
 --------------------
-- DBT_TEST_SILVER → silver tables validated
+- SILVER_VALIDATE → silver tables validated
 - ENTITY_POSTPROCESS_PRE → any entity-specific prep complete
 
 Writes / side effects

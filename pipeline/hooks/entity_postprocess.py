@@ -11,7 +11,7 @@ each registered step. Each step is one of:
     type: sql     → path to .sql file; delegates to sql_file_runner
 
 This is the MANIFEST-driven dispatcher. The runner calls it twice per
-entity (pre-DBT_MARTS and post-ASSOC_VALIDATE). Entities without
+entity (pre-GOLD_VALIDATE and post-ASSOC_VALIDATE). Entities without
 postprocess entries receive mode="not_applicable" and the stage
 transitions to SKIPPED.
 
@@ -25,7 +25,7 @@ Current postprocess registry (see MANIFEST.yaml)
 
 Upstream assumptions
 --------------------
-- PRE phase: after DBT_TEST_SILVER, before DBT_MARTS
+- PRE phase: after SILVER_VALIDATE, before GOLD_VALIDATE
 - POST phase: after ASSOC_VALIDATE, before POST_RUN_VERIFY
 
 Writes / side effects

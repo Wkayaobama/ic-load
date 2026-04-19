@@ -21,7 +21,7 @@ run fails BEFORE this stage executes.
 
 Upstream assumptions
 --------------------
-- DBT_TEST_MARTS (or legacy DBT_BUILD) → fct_{entity}_silver materialized and passing tests
+- ENTITY_POSTPROCESS_PRE → silver normalised tables ready
 - GOLD_VALIDATE → --approve-gold set by operator (human gate)
 
 Writes / side effects
