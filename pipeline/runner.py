@@ -125,12 +125,14 @@ def _run_bronze(
     csv_path = Path(bronze_csv_override) if bronze_csv_override else latest_bronze_path(entity)
     if csv_path is None:
         transition(ctx, PipelineStage.BRONZE_LOAD, StageStatus.FAILED, reason="no_bronze_csv_found", entity=entity)
+        return
 
     if _should_run(ctx, PipelineStage.BRONZE_LOAD, resume_stage):
         try:
             rows = loader.load_csv_to_duckdb(str(csv_path), f"bronze_{entity}")
         except Exception as exc:
             transition(ctx, PipelineStage.BRONZE_LOAD, StageStatus.FAILED, reason=str(exc))
+            return
         transition(ctx, PipelineStage.BRONZE_LOAD, StageStatus.SUCCESS, row_count=rows, csv=str(csv_path))
 
     if _should_run(ctx, PipelineStage.BRONZE_METADATA, resume_stage):
@@ -138,6 +140,7 @@ def _run_bronze(
             loader.add_bronze_metadata(f"bronze_{entity}", str(csv_path))
         except Exception as exc:
             transition(ctx, PipelineStage.BRONZE_METADATA, StageStatus.FAILED, reason=str(exc))
+            return
         transition(ctx, PipelineStage.BRONZE_METADATA, StageStatus.SUCCESS)
 
     if _should_run(ctx, PipelineStage.BRONZE_WATERMARK, resume_stage):
@@ -148,6 +151,7 @@ def _run_bronze(
                 counts = loader._tag_load_status(f"bronze_{entity}", entity_cfg.primary_key)
             except Exception as exc:
                 transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.FAILED, reason=str(exc))
+                return
             transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SUCCESS, **counts)
 
     if _should_run(ctx, PipelineStage.BRONZE_EXPORT, resume_stage):
@@ -158,6 +162,7 @@ def _run_bronze(
                 exported = loader.export_to_postgres(f"bronze_{entity}", entity_cfg.staging_table)
             except Exception as exc:
                 transition(ctx, PipelineStage.BRONZE_EXPORT, StageStatus.FAILED, reason=str(exc))
+                return
             transition(ctx, PipelineStage.BRONZE_EXPORT, StageStatus.SUCCESS, exported=exported)
 
 

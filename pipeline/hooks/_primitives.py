@@ -57,9 +57,8 @@ def run_sql_file(
         raise FileNotFoundError(f"SQL file not found: {sql_path}")
 
     sql_text = sql_path.read_text(encoding="utf-8")
-    rows = run_sql_text(sql_text, params=params)
     start = time.perf_counter()
-    # run_sql_text already executed — measure lightweight timing for logging.
+    rows = run_sql_text(sql_text, params=params)
     duration = time.perf_counter() - start
     return {
         "file": str(sql_path),
