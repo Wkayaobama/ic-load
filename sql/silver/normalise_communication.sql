@@ -20,7 +20,7 @@ SELECT
     "Comm_Type"                                              AS comm_type,
     "Comm_Status"                                            AS comm_status,
     "Comm_Priority"                                          AS comm_priority,
-    "Comm_Channel"                                           AS comm_channel,
+    NULL                                                     AS comm_channel,
 
     -- Strip HTML from subject and note
     staging.fn_clean_html("Comm_Subject")                    AS comm_subject,
@@ -39,15 +39,16 @@ SELECT
     "Comm_OpportunityId"                                     AS comm_opportunityid,
     "Comm_CaseId"                                            AS comm_caseid,
 
-    -- Denormalised (may be absent from older Bronze extracts — NULL if missing)
-    "Person_Email"                                           AS person_email,
-    "Person_Name"                                            AS person_name,
-    "Comp_CompanyId"                                         AS comp_companyid,
-    "Comp_Name"                                              AS comp_name,
-    "Comp_WebSite"                                           AS comp_website,
+    -- Denormalised (column names from vCalendarCommunication view)
+    "Person_EmailAddress"                                    AS person_email,
+    CONCAT_WS(' ', NULLIF("Person_FirstName", ''),
+                   NULLIF("Person_LastName", ''))            AS person_name,
+    "Company_Id"                                             AS comp_companyid,
+    "Company_Name"                                           AS comp_name,
+    NULL                                                     AS comp_website,
 
-    -- Owner email from denormalised Companies join (used for parent tiebreaker)
-    "Companies.Owner_Email"                                  AS icalps_owner_email,
+    -- Owner email not available in vCalendarCommunication extract
+    NULL                                                     AS icalps_owner_email,
 
     -- Load-status watermark — carried through unchanged
     _load_status,

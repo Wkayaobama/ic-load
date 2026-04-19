@@ -16,12 +16,12 @@ WITH ranked AS (
         "Oppo_OpportunityId"                                        AS oppo_opportunityid,
         "Oppo_Description"                                          AS oppo_description,
         "Oppo_Type"                                                 AS oppo_type,
-        "Oppo_Category"                                             AS oppo_category,
+        NULL                                                        AS oppo_category,
         "Oppo_Stage"                                                AS oppo_stage,
         "Oppo_Status"                                               AS oppo_status,
         "Oppo_AssignedUserId"                                       AS oppo_assigneduserid,
-        "Oppo_Notes"                                                AS oppo_notes,
-        "Oppo_Deleted"                                              AS oppo_deleted,
+        "Oppo_Note"                                                 AS oppo_notes,
+        NULL                                                        AS oppo_deleted,
         "Oppo_PrimaryCompanyId"                                     AS oppo_primarycompanyid,
         "Oppo_PrimaryPersonId"                                      AS oppo_primarypersonid,
         "Oppo_CreatedDate"                                          AS oppo_createddate,
@@ -38,9 +38,9 @@ WITH ranked AS (
 
         CAST(
             CASE
-                WHEN "Oppo_OpenedDate"::text LIKE '%T%'
-                    THEN SPLIT_PART("Oppo_OpenedDate"::text, 'T', 1)
-                ELSE "Oppo_OpenedDate"::text
+                WHEN "Oppo_Opened"::text LIKE '%T%'
+                    THEN SPLIT_PART("Oppo_Opened"::text, 'T', 1)
+                ELSE "Oppo_Opened"::text
             END
         AS date)                                                    AS icalps_opendate,
 
@@ -59,9 +59,19 @@ WITH ranked AS (
             - COALESCE(staging.fn_normalize_currency("Oppo_Cost"::text)::double precision, 0.0)
                                                                     AS cc_net,
 
-        -- HubSpot stage mapping (pre-computed at Bronze extraction)
-        hubspot_dealstage_name,
-        hubspot_pipeline_id,
+        -- HubSpot stage: derive name from pre-computed ID (extraction CASE, Feb 2026)
+        -- 396 NULLs expected: Lost/Abandonne/NoGo + unmatched Negotiating records
+        CASE "HubSpot_Dealstage_ID"::text
+            WHEN '1116419649' THEN 'Closed Won'
+            WHEN '1116419644' THEN 'Identified'
+            WHEN '1116419645' THEN 'Qualified'
+            WHEN '1116419646' THEN 'Design In'
+            WHEN '1116419647' THEN 'Design Win'
+            WHEN '1116652341' THEN 'On-Hold'
+            ELSE NULL
+        END                                                         AS hubspot_dealstage_name,
+        "HubSpot_Dealstage_ID"                                      AS hubspot_dealstage_id,
+        "HubSpot_Pipeline_ID"                                       AS hubspot_pipeline_id,
 
         -- Denormalised
         "Company_Name"                                              AS company_name,
@@ -109,6 +119,7 @@ SELECT
     cc_net,
     cc_net * icalps_certainty / 100.0                               AS cc_net_weighted,
     hubspot_dealstage_name,
+    hubspot_dealstage_id,
     hubspot_pipeline_id,
     company_name,
     company_language,
