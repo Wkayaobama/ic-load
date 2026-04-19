@@ -11,59 +11,59 @@ DROP TABLE IF EXISTS staging.stg_contact_normalised CASCADE;
 
 CREATE TABLE staging.stg_contact_normalised AS
 SELECT
-    pers_personid,
-    pers_companyid,
-    staging.fn_clean_utf8(pers_firstname)                       AS pers_firstname,
-    staging.fn_clean_utf8(pers_lastname)                        AS pers_lastname,
-    pers_middlename,
-    pers_salutation,
-    pers_gender,
-    pers_suffix,
+    "Pers_PersonId"                                              AS pers_personid,
+    "Pers_CompanyId"                                             AS pers_companyid,
+    staging.fn_clean_utf8("Pers_FirstName")                      AS pers_firstname,
+    staging.fn_clean_utf8("Pers_LastName")                       AS pers_lastname,
+    "Pers_MiddleName"                                            AS pers_middlename,
+    "Pers_Salutation"                                            AS pers_salutation,
+    "Pers_Gender"                                                AS pers_gender,
+    "Pers_Suffix"                                                AS pers_suffix,
 
     -- Title: strip HTML, truncate 150 chars
-    LEFT(staging.fn_clean_html(pers_title), 150)                AS icalps_title,
+    LEFT(staging.fn_clean_html("Pers_Title"), 150)               AS icalps_title,
 
-    pers_department,
-    staging.fn_map_contact_status(pers_status)                  AS icalps_pers_status,
-    pers_source,
-    pers_territory,
-    pers_website,
-    pers_createddate,
-    pers_updateddate,
-    pers_createdby,
+    "Pers_Department"                                            AS pers_department,
+    staging.fn_map_contact_status("Pers_Status")                 AS icalps_pers_status,
+    "Pers_Source"                                                AS pers_source,
+    "Pers_Territory"                                             AS pers_territory,
+    "Pers_WebSite"                                               AS pers_website,
+    "Pers_CreatedDate"                                           AS pers_createddate,
+    "Pers_UpdatedDate"                                           AS pers_updateddate,
+    "Pers_CreatedBy"                                             AS pers_createdby,
 
     -- Company (denormalised)
-    company_name,
-    company_website,
-    company_type,
+    "Company_Name"                                               AS company_name,
+    "Company_WebSite"                                            AS company_website,
+    "Company_Type"                                               AS company_type,
 
     -- Email: validate format
     CASE
-        WHEN person_email LIKE '%@%' THEN person_email
+        WHEN "Person_Email" LIKE '%@%' THEN "Person_Email"
         ELSE NULL
-    END                                                         AS icalps_email,
+    END                                                          AS icalps_email,
 
     -- Phone
-    staging.fn_normalize_phone_e164(person_phone_business, 'FR') AS icalps_businessphone,
-    staging.fn_normalize_phone_e164(person_phone_mobile, 'FR')   AS icalps_mobilephone,
+    staging.fn_normalize_phone_e164("Person_Phone_Business", 'FR') AS icalps_businessphone,
+    staging.fn_normalize_phone_e164("Person_Phone_Mobile", 'FR')   AS icalps_mobilephone,
 
     -- Address
-    address_street1                                             AS icalps_street_address,
+    "Address_Street1"                                            AS icalps_street_address,
     LEFT(
         CONCAT_WS(', ',
-            NULLIF(address_street1, ''),
-            NULLIF(address_city, ''),
-            NULLIF(address_postcode, ''),
-            NULLIF(address_country, '')
+            NULLIF("Address_Street1", ''),
+            NULLIF("Address_City", ''),
+            NULLIF("Address_PostCode", ''),
+            NULLIF("Address_Country", '')
         ), 500
-    )                                                           AS icalps_full_address,
-    address_city,
-    address_state,
-    address_postcode,
-    staging.fn_map_country_iso(address_country)                 AS icalps_country,
+    )                                                            AS icalps_full_address,
+    "Address_City"                                               AS address_city,
+    "Address_State"                                              AS address_state,
+    "Address_PostCode"                                           AS address_postcode,
+    staging.fn_map_country_iso("Address_Country")                AS icalps_country,
 
     -- LinkedIn
-    staging.fn_validate_linkedin_url(linkedin_url)              AS icalps_linkedin_url,
+    staging.fn_validate_linkedin_url("LinkedIn_URL")             AS icalps_linkedin_url,
 
     -- Load-status watermark — carried through unchanged
     _load_status,
@@ -71,4 +71,4 @@ SELECT
     _last_modified_at
 
 FROM staging.stg_contact
-WHERE pers_personid IS NOT NULL;
+WHERE "Pers_PersonId" IS NOT NULL;

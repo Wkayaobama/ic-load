@@ -15,39 +15,39 @@ DROP TABLE IF EXISTS staging.stg_communication_normalised CASCADE;
 
 CREATE TABLE staging.stg_communication_normalised AS
 SELECT
-    comm_communicationid,
-    comm_action,
-    comm_type,
-    comm_status,
-    comm_priority,
-    comm_channel,
+    "Comm_CommunicationId"                                   AS comm_communicationid,
+    "Comm_Action"                                            AS comm_action,
+    "Comm_Type"                                              AS comm_type,
+    "Comm_Status"                                            AS comm_status,
+    "Comm_Priority"                                          AS comm_priority,
+    "Comm_Channel"                                           AS comm_channel,
 
     -- Strip HTML from subject and note
-    staging.fn_clean_html(comm_subject)                     AS comm_subject,
-    staging.fn_clean_html(comm_note)                        AS comm_note,
+    staging.fn_clean_html("Comm_Subject")                    AS comm_subject,
+    staging.fn_clean_html("Comm_Note")                       AS comm_note,
 
-    comm_email,
+    "Comm_Email"                                             AS comm_email,
 
     -- Timestamps (UTC conversion is a Gold-layer concern)
-    comm_datetime,
-    comm_originaldatetime,
-    comm_originaltodatetime,
+    "Comm_DateTime"                                          AS comm_datetime,
+    "Comm_OriginalDateTime"                                  AS comm_originaldatetime,
+    "Comm_OriginalToDateTime"                                AS comm_originaltodatetime,
 
     -- Linkage
-    person_id,
-    company_id,
-    comm_opportunityid,
-    comm_caseid,
+    "Person_Id"                                              AS person_id,
+    "Company_Id"                                             AS company_id,
+    "Comm_OpportunityId"                                     AS comm_opportunityid,
+    "Comm_CaseId"                                            AS comm_caseid,
 
     -- Denormalised (may be absent from older Bronze extracts — NULL if missing)
-    person_email,
-    person_name,
-    comp_companyid,
-    comp_name,
-    comp_website,
+    "Person_Email"                                           AS person_email,
+    "Person_Name"                                            AS person_name,
+    "Comp_CompanyId"                                         AS comp_companyid,
+    "Comp_Name"                                              AS comp_name,
+    "Comp_WebSite"                                           AS comp_website,
 
     -- Owner email from denormalised Companies join (used for parent tiebreaker)
-    "companies.owner_email"                                 AS icalps_owner_email,
+    "Companies.Owner_Email"                                  AS icalps_owner_email,
 
     -- Load-status watermark — carried through unchanged
     _load_status,
@@ -55,6 +55,6 @@ SELECT
     _last_modified_at
 
 FROM staging.stg_communication
-WHERE comm_communicationid IS NOT NULL
+WHERE "Comm_CommunicationId" IS NOT NULL
   -- Silver orphan gate: drop communications with no CRM link
-  AND (company_id IS NOT NULL OR person_id IS NOT NULL);
+  AND ("Company_Id" IS NOT NULL OR "Person_Id" IS NOT NULL);

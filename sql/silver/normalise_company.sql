@@ -11,49 +11,49 @@ DROP TABLE IF EXISTS staging.stg_company_normalised CASCADE;
 
 CREATE TABLE staging.stg_company_normalised AS
 SELECT
-    comp_companyid,
-    staging.fn_clean_utf8(comp_name)                        AS comp_name,
-    comp_website,
-    comp_territory,
-    comp_sector,
-    comp_revenue,
-    comp_employees,
-    comp_createddate,
-    comp_updateddate,
-    comp_source,
-    comp_currencyid,
+    "Comp_CompanyId"                                         AS comp_companyid,
+    staging.fn_clean_utf8("Comp_Name")                       AS comp_name,
+    "Comp_WebSite"                                           AS comp_website,
+    "Comp_Territory"                                         AS comp_territory,
+    "Comp_Sector"                                            AS comp_sector,
+    "Comp_Revenue"                                           AS comp_revenue,
+    "Comp_Employees"                                         AS comp_employees,
+    "Comp_CreatedDate"                                       AS comp_createddate,
+    "Comp_UpdatedDate"                                       AS comp_updateddate,
+    "Comp_Source"                                            AS comp_source,
+    "Comp_CurrencyId"                                        AS comp_currencyid,
 
     -- Enum mappings via UDFs
-    staging.fn_map_company_status(comp_status)              AS icalps_companystatus,
-    staging.fn_map_company_type(comp_type)                  AS icalps_companytype,
-    staging.fn_map_language_iso(comp_language)              AS icalps_language,
+    staging.fn_map_company_status("Comp_Status")             AS icalps_companystatus,
+    staging.fn_map_company_type("Comp_Type")                 AS icalps_companytype,
+    staging.fn_map_language_iso("Comp_Language")             AS icalps_language,
 
     -- Address
-    address_street1                                         AS icalps_street_address,
+    "Address_Street1"                                        AS icalps_street_address,
     LEFT(
         CONCAT_WS(', ',
-            NULLIF(address_street1, ''),
-            NULLIF(address_street2, ''),
-            NULLIF(address_city, ''),
-            NULLIF(address_postcode, ''),
-            NULLIF(address_country, '')
+            NULLIF("Address_Street1", ''),
+            NULLIF("Address_Street2", ''),
+            NULLIF("Address_City", ''),
+            NULLIF("Address_PostCode", ''),
+            NULLIF("Address_Country", '')
         ), 500
-    )                                                       AS icalps_full_address,
-    address_city,
-    address_state,
-    address_postcode,
-    address_country                                         AS icalps_country_raw,
-    staging.fn_map_country_iso(address_country)             AS icalps_country,
+    )                                                        AS icalps_full_address,
+    "Address_City"                                           AS address_city,
+    "Address_State"                                          AS address_state,
+    "Address_PostCode"                                       AS address_postcode,
+    "Address_Country"                                        AS icalps_country_raw,
+    staging.fn_map_country_iso("Address_Country")            AS icalps_country,
 
     -- Contact info
-    company_email                                           AS icalps_company_email,
-    staging.fn_normalize_phone_e164(company_phone, 'FR')    AS icalps_companyphone,
-    staging.fn_validate_linkedin_url(linkedin_url)          AS icalps_linkedin_url,
+    "Company_Email"                                          AS icalps_company_email,
+    staging.fn_normalize_phone_e164("Company_Phone", 'FR')   AS icalps_companyphone,
+    staging.fn_validate_linkedin_url("LinkedIn_URL")         AS icalps_linkedin_url,
 
     -- Owner (resolved in a separate owner resolution step)
-    owner_email                                             AS icalps_ownerid_raw,
-    owner_firstname,
-    owner_lastname,
+    "Owner_Email"                                            AS icalps_ownerid_raw,
+    "Owner_FirstName"                                        AS owner_firstname,
+    "Owner_LastName"                                         AS owner_lastname,
 
     -- Load-status watermark — carried through unchanged
     _load_status,
@@ -61,4 +61,4 @@ SELECT
     _last_modified_at
 
 FROM staging.stg_company
-WHERE comp_companyid IS NOT NULL;
+WHERE "Comp_CompanyId" IS NOT NULL;

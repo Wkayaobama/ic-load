@@ -13,64 +13,64 @@ DROP TABLE IF EXISTS staging.stg_opportunity_normalised CASCADE;
 CREATE TABLE staging.stg_opportunity_normalised AS
 WITH ranked AS (
     SELECT
-        oppo_opportunityid,
-        oppo_description,
-        oppo_type,
-        oppo_category,
-        oppo_stage,
-        oppo_status,
-        oppo_assigneduserid,
-        oppo_notes,
-        oppo_deleted,
-        oppo_primarycompanyid,
-        oppo_primarypersonid,
-        oppo_createddate,
-        oppo_updateddate,
+        "Oppo_OpportunityId"                                        AS oppo_opportunityid,
+        "Oppo_Description"                                          AS oppo_description,
+        "Oppo_Type"                                                 AS oppo_type,
+        "Oppo_Category"                                             AS oppo_category,
+        "Oppo_Stage"                                                AS oppo_stage,
+        "Oppo_Status"                                               AS oppo_status,
+        "Oppo_AssignedUserId"                                       AS oppo_assigneduserid,
+        "Oppo_Notes"                                                AS oppo_notes,
+        "Oppo_Deleted"                                              AS oppo_deleted,
+        "Oppo_PrimaryCompanyId"                                     AS oppo_primarycompanyid,
+        "Oppo_PrimaryPersonId"                                      AS oppo_primarypersonid,
+        "Oppo_CreatedDate"                                          AS oppo_createddate,
+        "Oppo_UpdatedDate"                                          AS oppo_updateddate,
 
         -- Close date: strip time component
         CAST(
             CASE
-                WHEN oppo_closedate::text LIKE '%T%'
-                    THEN SPLIT_PART(oppo_closedate::text, 'T', 1)
-                ELSE oppo_closedate::text
+                WHEN "Oppo_CloseDate"::text LIKE '%T%'
+                    THEN SPLIT_PART("Oppo_CloseDate"::text, 'T', 1)
+                ELSE "Oppo_CloseDate"::text
             END
-        AS date)                                                AS icalps_closedate,
+        AS date)                                                    AS icalps_closedate,
 
         CAST(
             CASE
-                WHEN oppo_openeddate::text LIKE '%T%'
-                    THEN SPLIT_PART(oppo_openeddate::text, 'T', 1)
-                ELSE oppo_openeddate::text
+                WHEN "Oppo_OpenedDate"::text LIKE '%T%'
+                    THEN SPLIT_PART("Oppo_OpenedDate"::text, 'T', 1)
+                ELSE "Oppo_OpenedDate"::text
             END
-        AS date)                                                AS icalps_opendate,
+        AS date)                                                    AS icalps_opendate,
 
         -- Cost: strip currency symbols, normalise decimal
-        staging.fn_normalize_currency(oppo_cost::text)          AS icalps_cost,
+        staging.fn_normalize_currency("Oppo_Cost"::text)            AS icalps_cost,
 
         -- Forecast and certainty
-        CAST(oppo_forecast AS double precision)                 AS icalps_forecast,
-        CAST(oppo_certainty AS double precision)                AS icalps_certainty,
+        CAST("Oppo_Forecast" AS double precision)                   AS icalps_forecast,
+        CAST("Oppo_Certainty" AS double precision)                  AS icalps_certainty,
 
         -- Computed columns
-        CAST(oppo_forecast AS double precision)
-            * CAST(oppo_certainty AS double precision) / 100.0  AS cc_weighted,
+        CAST("Oppo_Forecast" AS double precision)
+            * CAST("Oppo_Certainty" AS double precision) / 100.0    AS cc_weighted,
 
-        CAST(oppo_forecast AS double precision)
-            - COALESCE(staging.fn_normalize_currency(oppo_cost::text)::double precision, 0.0)
-                                                                AS cc_net,
+        CAST("Oppo_Forecast" AS double precision)
+            - COALESCE(staging.fn_normalize_currency("Oppo_Cost"::text)::double precision, 0.0)
+                                                                    AS cc_net,
 
         -- HubSpot stage mapping (pre-computed at Bronze extraction)
         hubspot_dealstage_name,
         hubspot_pipeline_id,
 
         -- Denormalised
-        company_name,
-        company_language,
-        person_firstname,
-        person_lastname,
-        person_email,
-        user_fullname,
-        user_email,
+        "Company_Name"                                              AS company_name,
+        "Company_Language"                                          AS company_language,
+        "Person_FirstName"                                          AS person_firstname,
+        "Person_LastName"                                           AS person_lastname,
+        "Person_Email"                                              AS person_email,
+        "User_FullName"                                             AS user_fullname,
+        "User_Email"                                                AS user_email,
 
         -- Load-status watermark — carried through unchanged
         _load_status,
@@ -79,12 +79,12 @@ WITH ranked AS (
 
         -- Deduplication: keep latest per opportunity
         ROW_NUMBER() OVER (
-            PARTITION BY oppo_opportunityid
-            ORDER BY oppo_updateddate DESC NULLS LAST
-        )                                                       AS _dedup_rank
+            PARTITION BY "Oppo_OpportunityId"
+            ORDER BY "Oppo_UpdatedDate" DESC NULLS LAST
+        )                                                           AS _dedup_rank
 
     FROM staging.stg_opportunity
-    WHERE oppo_opportunityid IS NOT NULL
+    WHERE "Oppo_OpportunityId" IS NOT NULL
 )
 SELECT
     oppo_opportunityid,
@@ -107,7 +107,7 @@ SELECT
     icalps_certainty,
     cc_weighted,
     cc_net,
-    cc_net * icalps_certainty / 100.0                           AS cc_net_weighted,
+    cc_net * icalps_certainty / 100.0                               AS cc_net_weighted,
     hubspot_dealstage_name,
     hubspot_pipeline_id,
     company_name,
