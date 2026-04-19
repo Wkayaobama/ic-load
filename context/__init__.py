@@ -3,7 +3,6 @@
 from .config import (  # noqa: F401
     ARTIFACTS_DIR,
     BRONZE_DIR,
-    DBT_PROJECT_DIR,
     ENTITIES,
     PROJECT_ROOT,
     EntityConfig,

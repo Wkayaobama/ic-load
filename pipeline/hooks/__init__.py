@@ -14,7 +14,6 @@ pipeline/hooks/
 ├── pg_functions.py             → PG_FUNCTIONS_INSTALL
 ├── bronze.py                   → BRONZE_{LOAD,METADATA,WATERMARK,EXPORT}
 ├── silver_validator.py         → SILVER_VALIDATE
-├── dbt.py                      → DBT_{STAGING,INTERMEDIATE,MARTS,TEST_SILVER,TEST_MARTS,BUILD}
 ├── dedupe.py                   → DEDUPE_GUARD
 ├── gold.py                     → GOLD_{VALIDATE,UPSERT}
 ├── sync.py                     → STACKSYNC_SYNC
@@ -26,19 +25,6 @@ Every hook module carries a standardized docstring block describing stage,
 upstream assumptions, writes, common failures, and re-running semantics
 (see §7.5). Operators reading a failed log can walk from stage name to
 module to diagnosis without reading implementation code.
-
-Phase 2 status
---------------
-Delegation hooks (bronze, silver_validator, gold, sync, associations,
-dbt_runner) are implemented — they wire the existing pipeline/* modules
-through the new package surface. Remaining stubs (pg_functions, dedupe,
-entity_postprocess, post_run_verify) raise NotImplementedError; they
-require Phase 3+ dependencies (pg function SQL files, dbt entity models,
-MANIFEST-driven dispatcher).
-
-SilverNormaliserFactory remains as a LEGACY field — runner.py still uses
-it for the deprecated SILVER_NORMALISE stage. Phase 3 removes both once
-dbt staging + intermediate models fully cover normalisation.
 """
 from __future__ import annotations
 
@@ -58,17 +44,12 @@ class PipelineHooks:
     # Bronze — BRONZE_LOAD / METADATA / WATERMARK / EXPORT
     bronze_loader_factory: Callable[[], Any]
 
-    # Silver — SILVER_NORMALISE (LEGACY, deprecated) and SILVER_VALIDATE
+    # Silver — SILVER_NORMALISE and SILVER_VALIDATE
     silver_normaliser_factory: Callable[[], Any]
     silver_validator_factory: Callable[[], Any]
 
     # pg functions — PG_FUNCTIONS_INSTALL (Contract A: runs per-runner, not only orchestrator)
     pg_functions_installer: Callable[[bool], dict[str, Any]]
-
-    # dbt — DBT_{STAGING,INTERMEDIATE,MARTS,TEST_SILVER,TEST_MARTS,BUILD}
-    # Signature: (entity, selector, command, dry_run) → dict
-    # Empty selector means "all models" (used by deprecated DBT_BUILD fallback).
-    dbt_runner: Callable[[str, str, Literal["run", "test"], bool], dict[str, Any]]
 
     # Entity-specific postprocess — ENTITY_POSTPROCESS_{PRE,POST}
     # Dispatches via MANIFEST.yaml entities.{entity}.postprocess.{phase}
@@ -94,17 +75,11 @@ class PipelineHooks:
 
 
 def build_default_hooks() -> PipelineHooks:
-    """Wire up the production hook set.
-
-    Phase 2: delegation hooks (bronze, silver, gold, sync, associations,
-    dbt) return real implementations. Remaining hooks raise
-    NotImplementedError with pointers to the migration phase that adds them.
-    """
+    """Wire up the production hook set."""
     from pipeline.hooks import (
         _primitives,
         associations,
         bronze,
-        dbt,
         dedupe,
         entity_postprocess,
         gold,
@@ -120,7 +95,6 @@ def build_default_hooks() -> PipelineHooks:
         silver_normaliser_factory=SilverNormaliser,
         silver_validator_factory=silver_validator.silver_validator_factory,
         pg_functions_installer=pg_functions.install,
-        dbt_runner=dbt.run_dbt,
         entity_postprocessor=entity_postprocess.dispatch,
         dedupe_guarder=dedupe.guard,
         gold_upserter=gold.upsert,

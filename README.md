@@ -122,7 +122,7 @@ The intended repo-root layout is:
 - `context/`
 - `pipeline/`
 - `sql/`
-- `dbt/` — placeholder only; see `dbt/README.md` (dbt connection is Area 2 scope)
+- `dbt/` — not used in this repo; stages removed
 - `tests/`
 - `ValidationRules/`
 - `GomplateRepoMix/`
