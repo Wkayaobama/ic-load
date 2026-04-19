@@ -141,11 +141,14 @@ def _run_bronze(
         transition(ctx, PipelineStage.BRONZE_METADATA, StageStatus.SUCCESS)
 
     if _should_run(ctx, PipelineStage.BRONZE_WATERMARK, resume_stage):
-        try:
-            counts = loader._tag_load_status(f"bronze_{entity}", entity_cfg.primary_key)
-        except Exception as exc:
-            transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.FAILED, reason=str(exc))
-        transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SUCCESS, **counts)
+        if dry_run:
+            transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SKIPPED, reason="dry_run")
+        else:
+            try:
+                counts = loader._tag_load_status(f"bronze_{entity}", entity_cfg.primary_key)
+            except Exception as exc:
+                transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.FAILED, reason=str(exc))
+            transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SUCCESS, **counts)
 
     if _should_run(ctx, PipelineStage.BRONZE_EXPORT, resume_stage):
         if dry_run:
