@@ -91,7 +91,11 @@ class SilverValidator:
 
     def _q(self, sql: str) -> pd.DataFrame:
         with get_connection() as conn:
-            return pd.read_sql(sql, conn)
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+                col_names = [desc[0] for desc in cur.description]
+        return pd.DataFrame(rows, columns=col_names)
 
     def _scalar(self, sql: str) -> float:
         df = self._q(sql)
