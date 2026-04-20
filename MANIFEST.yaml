@@ -86,10 +86,7 @@ entities:
       gold_upsert:        sql/opportunity/07_gold_upsert.sql
       association_bridge: sql/opportunity/09_association_bridge.sql
       post_run_verify:    sql/opportunity/10_post_run_verify.sql
-    postprocess:
-      pre:
-        - { type: python, module: pipeline.dedupe, fn: run_probe,
-            note: "Levenshtein probe — probe-mode only" }
+    postprocess: {}
 
   communication:
     gold_table: "hubspot.{calls,tasks,notes,meetings}"

@@ -76,11 +76,11 @@ class PipelineHooks:
 
 def build_default_hooks() -> PipelineHooks:
     """Wire up the production hook set."""
+    from pipeline import dedupe as pipeline_dedupe
     from pipeline.hooks import (
         _primitives,
         associations,
         bronze,
-        dedupe,
         entity_postprocess,
         gold,
         pg_functions,
@@ -96,7 +96,11 @@ def build_default_hooks() -> PipelineHooks:
         silver_validator_factory=silver_validator.silver_validator_factory,
         pg_functions_installer=pg_functions.install,
         entity_postprocessor=entity_postprocess.dispatch,
-        dedupe_guarder=dedupe.guard,
+        dedupe_guarder=lambda entity, dry_run: (
+            pipeline_dedupe.run_probe(dry_run)
+            if entity == "opportunity"
+            else {"mode": "not_applicable"}
+        ),
         gold_upserter=gold.upsert,
         sync_waiter=sync.wait_for_sync,
         association_runner=associations.run_bridge,

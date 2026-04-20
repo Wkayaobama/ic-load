@@ -89,6 +89,8 @@ def run(
     # Entity-specific pre-gold work (e.g. case materialize view).
     _run_entity_postprocess(ctx, entity, "pre", dry_run, hooks)
 
+    _run_dedupe_guard(ctx, entity, dry_run, probe_mode, hooks)
+
     # Gold gate: requires --approve-gold + pre-gold duplicate check.
     _run_gold_validate(ctx, entity, dry_run, approve_gold)
     _run_gold_upsert(ctx, entity, dry_run, hooks)
@@ -296,6 +298,61 @@ def _run_entity_postprocess(
         phase=phase,
         mode=mode,
         steps=len(result.get("steps", [])),
+    )
+
+
+def _run_dedupe_guard(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    probe_mode: bool,
+    hooks: PipelineHooks,
+) -> None:
+    if not _should_run(ctx, PipelineStage.DEDUPE_GUARD, None):
+        return
+
+    result = hooks.dedupe_guarder(entity, dry_run)
+    ctx.metadata["dedupe_guard"] = result
+
+    block_count = int(result.get("block_count", 0))
+    review_count = int(result.get("review_count", 0))
+    not_applicable = result.get("mode") == "not_applicable"
+
+    if not_applicable:
+        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="not_applicable", entity=entity)
+        return
+
+    if block_count > 0:
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            StageStatus.FAILED,
+            block_count=block_count,
+            review_count=review_count,
+            artifact=result.get("artifact_json"),
+        )
+
+    if review_count > 0:
+        status = StageStatus.WARNING if dry_run or probe_mode else StageStatus.FAILED
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            status,
+            block_count=block_count,
+            review_count=review_count,
+            safe_count=result.get("safe_count", 0),
+            artifact=result.get("artifact_json"),
+        )
+        return
+
+    transition(
+        ctx,
+        PipelineStage.DEDUPE_GUARD,
+        StageStatus.SUCCESS,
+        block_count=block_count,
+        review_count=review_count,
+        safe_count=result.get("safe_count", 0),
+        artifact=result.get("artifact_json"),
     )
 
 
