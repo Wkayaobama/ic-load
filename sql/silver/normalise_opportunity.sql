@@ -59,10 +59,11 @@ WITH ranked AS (
             - COALESCE(staging.fn_normalize_currency("Oppo_Cost"::text)::double precision, 0.0)
                                                                     AS cc_net,
 
-        -- HubSpot stage: derive name from pre-computed ID (extraction CASE, Feb 2026)
-        -- 396 NULLs expected: Lost/Abandonne/NoGo + unmatched Negotiating records
+        -- HubSpot stage: derive name from pre-computed ID (extraction CASE, Apr 2026)
         CASE "HubSpot_Dealstage_ID"::text
             WHEN '1116419649' THEN 'Closed Won'
+            WHEN '1116419650' THEN 'Closed Dead'
+            WHEN '1313738265' THEN 'Closed Lost'
             WHEN '1116419644' THEN 'Identified'
             WHEN '1116419645' THEN 'Qualified'
             WHEN '1116419646' THEN 'Design In'
