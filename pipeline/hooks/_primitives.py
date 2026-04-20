@@ -57,9 +57,8 @@ def run_sql_file(
         raise FileNotFoundError(f"SQL file not found: {sql_path}")
 
     sql_text = sql_path.read_text(encoding="utf-8")
-    rows = run_sql_text(sql_text, params=params)
     start = time.perf_counter()
-    # run_sql_text already executed — measure lightweight timing for logging.
+    rows = run_sql_text(sql_text, params=params)
     duration = time.perf_counter() - start
     return {
         "file": str(sql_path),
@@ -116,8 +115,4 @@ class StructuredLogger:
         status: str,
         details: Mapping[str, Any] | None = None,
     ) -> None:
-        raise NotImplementedError(
-            "pipeline.hooks._primitives.StructuredLogger.record — "
-            "scheduled for Phase 5 (Orchestration + Logging). "
-            "See IC_Load_Production_Plan.md §11 Phase 5."
-        )
+        return

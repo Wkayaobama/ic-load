@@ -139,3 +139,28 @@ def map_deal_stage(pipeline: str, stage: str, outcome: str) -> tuple:
         raise ValueError(f"Unknown pipeline: {pipeline} (only Hardware pipeline supported with new IDs)")
 
     return (pipeline_id, stage_id, hubspot_stage_name)
+
+
+def list_all_mappings() -> list[dict]:
+    """Return all stage mappings as a list of dicts for seed generation.
+
+    Keys: icalps_pipeline, icalps_stage, icalps_outcome,
+          hubspot_pipeline_id, hubspot_stage_id, hubspot_stage_name
+    """
+    result = []
+    for (pipeline, stage, outcome), hubspot_stage_name in STAGE_OUTCOME_TO_HUBSPOT.items():
+        if pipeline == "Hardware":
+            pipeline_id = HUBSPOT_HARDWARE_PIPELINE
+            stage_id = HARDWARE_STAGES.get(hubspot_stage_name)
+        else:
+            pipeline_id = None
+            stage_id = None
+        result.append({
+            "icalps_pipeline": pipeline,
+            "icalps_stage": stage,
+            "icalps_outcome": outcome,
+            "hubspot_pipeline_id": pipeline_id,
+            "hubspot_stage_id": stage_id,
+            "hubspot_stage_name": hubspot_stage_name,
+        })
+    return result

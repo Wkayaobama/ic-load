@@ -9,6 +9,10 @@
 -- See IC_Load_Production_Plan.md §5.2 (ENTITY_POSTPROCESS entries).
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- Required by pipeline.dedupe for Levenshtein scoring. Needs superuser on
+-- first install; IF NOT EXISTS makes subsequent runs by the pipeline role safe.
+CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
+
 CREATE SCHEMA IF NOT EXISTS silver;
 
 

@@ -14,11 +14,10 @@ import yaml
 # The only path contract collaborators should rely on is "repo root contains
 # context/, pipeline/, sql/, ValidationRules/, and GomplateRepoMix/".
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+ARTIFACTS_DIR = Path(os.getenv("PIPELINE_ARTIFACTS_DIR", str(PROJECT_ROOT / "artifacts")))
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
-BRONZE_DIR = PROJECT_ROOT / "bronze_layer"
-DBT_PROJECT_DIR = PROJECT_ROOT / "dbt"
+BRONZE_DIR = Path(os.getenv("BRONZE_CSV_DIR", str(PROJECT_ROOT / "bronze_layer")))
 VALIDATION_SCHEMA_PATH = PROJECT_ROOT / "ValidationRules" / "icalps_crm_schema.yaml"
 SCHEMA_CONTEXT_PATH = PROJECT_ROOT / "GomplateRepoMix" / "schema_context.yaml"
 RUN_CONTEXT_PATH = PROJECT_ROOT / "GomplateRepoMix" / "run_context.yaml"
@@ -30,9 +29,10 @@ BENCHMARK_DIR = PROJECT_ROOT.parent / "benchmark"
 
 _BRONZE_PREFIX = {
     "communication": "Bronze_Communication",
-    "company": "Bronze_Company",
-    "contact": "Bronze_Person",
-    "opportunity": "Bronze_Opportunity",
+    "company":       "Bronze_Company",
+    "contact":       "Bronze_Person",
+    "opportunity":   "Bronze_Opportunity",
+    "case":          "Bronze_Case",
 }
 
 
@@ -69,6 +69,12 @@ ENTITIES: dict[str, EntityConfig] = {
         bronze_csv="Bronze_Opportunity.csv",
         staging_table="stg_opportunity",
         primary_key="Oppo_OpportunityId",
+    ),
+    "case": EntityConfig(
+        name="case",
+        bronze_csv="Bronze_Case.csv",
+        staging_table="stg_case",
+        primary_key="Case_CaseId",
     ),
 }
 
@@ -113,32 +119,10 @@ def load_manifest() -> dict[str, Any]:
     """Load MANIFEST.yaml — data registry for pipeline entities + hooks.
 
     See IC_Load_Production_Plan.md §10 for the schema. Keys used by the
-    runner: entities.{entity}.dbt_selectors.{staging,intermediate,marts},
-    entities.{entity}.sql_files.{gold_upsert,association_bridge,post_run_verify},
+    runner: entities.{entity}.sql_files.{gold_upsert,association_bridge,post_run_verify},
     entities.{entity}.postprocess.{pre,post}.
     """
     return load_yaml(MANIFEST_PATH)
-
-
-def resolve_dbt_selector(entity: str, stage_key: str) -> str:
-    """Look up the dbt selector string for an entity's stage.
-
-    stage_key: "staging" | "intermediate" | "marts"
-
-    Returns the selector (e.g. "stg_company", "tag:communication_marts").
-    Raises RuntimeError if the entity or key is missing from MANIFEST.yaml
-    so the runner can transition FAILED with a clear diagnosis path.
-    """
-    manifest = load_manifest()
-    entity_cfg = manifest.get("entities", {}).get(entity, {})
-    selectors = entity_cfg.get("dbt_selectors", {})
-    selector = selectors.get(stage_key)
-    if not selector:
-        raise RuntimeError(
-            f"MANIFEST.yaml missing entities.{entity}.dbt_selectors.{stage_key}. "
-            f"Add the selector to MANIFEST.yaml or fix the entity name."
-        )
-    return selector
 
 
 def load_thresholds(entity: str) -> dict[str, Any]:
@@ -420,13 +404,6 @@ def load_entity_translation_contract() -> dict[str, Any]:
             },
         },
     }
-
-
-def dbt_command() -> list[str] | None:
-    raw = os.getenv("ICALPS_DBT_COMMAND")
-    if not raw:
-        return None
-    return raw.split()
 
 
 def stacksync_sync_assumed() -> bool:

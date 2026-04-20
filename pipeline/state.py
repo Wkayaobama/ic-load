@@ -16,11 +16,6 @@ class PipelineStage(Enum):
     determines execution order. The runner uses `stage.value < resume.value`
     to decide which stages to skip on resume — no hardcoded stage list.
 
-    Legacy stages (SILVER_NORMALISE, DBT_BUILD) are retained for backwards
-    compatibility with the existing runner.py. They are deprecated and will
-    be removed in Phase 3 of the migration plan once dbt staging+intermediate
-    models fully replace the legacy silver normaliser.
-
     Order matches IC_Load_Production_Plan.md §5.1 exactly.
     """
 
@@ -36,21 +31,11 @@ class PipelineStage(Enum):
     BRONZE_EXPORT = auto()                  # 6
 
     # Silver
-    SILVER_NORMALISE = auto()               # 7  DEPRECATED — replaced by DBT_STAGING + DBT_INTERMEDIATE
+    SILVER_NORMALISE = auto()               # 7
     SILVER_VALIDATE = auto()                # 8
 
-    # dbt silver-layer stages (new, granular)
-    DBT_STAGING = auto()                    # 9
-    DBT_INTERMEDIATE = auto()               # 10
-    DBT_TEST_SILVER = auto()                # 11
-
-    # Entity-specific pre-marts postprocess (MANIFEST-driven)
-    ENTITY_POSTPROCESS_PRE = auto()         # 12
-
-    # dbt marts
-    DBT_MARTS = auto()                      # 13
-    DBT_TEST_MARTS = auto()                 # 14
-    DBT_BUILD = auto()                      # 15 DEPRECATED — monolithic predecessor to the DBT_* stages above
+    # Entity-specific pre-gold postprocess (MANIFEST-driven)
+    ENTITY_POSTPROCESS_PRE = auto()         # 9
 
     # Guardrails + Gold
     DEDUPE_GUARD = auto()                   # 16

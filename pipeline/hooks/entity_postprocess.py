@@ -11,7 +11,7 @@ each registered step. Each step is one of:
     type: sql     → path to .sql file; delegates to sql_file_runner
 
 This is the MANIFEST-driven dispatcher. The runner calls it twice per
-entity (pre-DBT_MARTS and post-ASSOC_VALIDATE). Entities without
+entity (pre-GOLD_VALIDATE and post-ASSOC_VALIDATE). Entities without
 postprocess entries receive mode="not_applicable" and the stage
 transitions to SKIPPED.
 
@@ -25,7 +25,7 @@ Current postprocess registry (see MANIFEST.yaml)
 
 Upstream assumptions
 --------------------
-- PRE phase: after DBT_TEST_SILVER, before DBT_MARTS
+- PRE phase: after SILVER_VALIDATE, before GOLD_VALIDATE
 - POST phase: after ASSOC_VALIDATE, before POST_RUN_VERIFY
 
 Writes / side effects
@@ -64,6 +64,8 @@ the operator outside the runner.
 """
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
 from typing import Any, Literal
 
 
@@ -74,22 +76,56 @@ def dispatch(
 ) -> dict[str, Any]:
     """Dispatch MANIFEST-registered postprocess steps for entity/phase.
 
-    Phase 2 implementation sketch:
-        1. Load MANIFEST.yaml.
-        2. steps = manifest["entities"][entity]["postprocess"].get(phase, [])
-        3. If empty: return {"mode": "not_applicable", "steps": []}.
-        4. For each step:
-             if step["type"] == "python":
-                 mod = importlib.import_module(step["module"])
-                 fn = getattr(mod, step["fn"])
-                 result = fn(dry_run=dry_run)
-             elif step["type"] == "sql":
-                 result = _primitives.run_sql_file(Path(step["file"]), dry_run=dry_run)
-             record (step, result) in ctx.metadata.
-        5. Return {"mode": "live", "steps": [{kind, result}, ...]}.
+    Reads MANIFEST.yaml:entities.{entity}.postprocess.{phase} and runs
+    each registered step in order. Step types:
+      sql_call — direct SQL string via run_sql_text
+      sql      — .sql file via run_sql_file
+      python   — importlib module.fn call; ImportError is caught and
+                 recorded as skipped (handles not-yet-created modules
+                 such as pipeline.dedupe in Phase 5)
     """
-    raise NotImplementedError(
-        f"pipeline.hooks.entity_postprocess.dispatch — Phase 1 scaffolding. "
-        f"Called for entity={entity!r}, phase={phase!r}. "
-        f"Phase 2: read MANIFEST.yaml postprocess entries and dispatch."
+    from context.config import load_manifest
+    from pipeline.hooks._primitives import run_sql_file, run_sql_text
+
+    manifest = load_manifest()
+    steps = (
+        manifest.get("entities", {})
+                .get(entity, {})
+                .get("postprocess", {})
+                .get(phase, [])
     )
+    if not steps:
+        return {"mode": "not_applicable", "steps": []}
+
+    results: list[dict[str, Any]] = []
+    for step in steps:
+        step_type = step.get("type")
+        if step_type == "sql_call":
+            if dry_run:
+                results.append({"type": "sql_call", "mode": "dry_run"})
+            else:
+                run_sql_text(step["call"])
+                results.append({"type": "sql_call", "mode": "executed"})
+        elif step_type == "sql":
+            result = run_sql_file(Path(step["file"]), dry_run=dry_run)
+            results.append({"type": "sql", **result})
+        elif step_type == "python":
+            try:
+                mod = importlib.import_module(step["module"])
+                fn = getattr(mod, step["fn"])
+                result = fn(dry_run=dry_run)
+                results.append({
+                    "type": "python",
+                    "module": step["module"],
+                    "fn": step["fn"],
+                    "result": result,
+                })
+            except ImportError as exc:
+                results.append({
+                    "type": "python",
+                    "module": step["module"],
+                    "status": "skipped",
+                    "reason": str(exc),
+                })
+
+    return {"mode": "dry_run" if dry_run else "live", "steps": results}

@@ -17,7 +17,7 @@ silent regression.
 Upstream assumptions (must be SUCCESS before this stage)
 --------------------------------------------------------
 - BRONZE_EXPORT → staging.stg_{entity} populated
-- SILVER_NORMALISE (legacy) OR DBT_INTERMEDIATE (Phase 3+) → normalised silver tables present
+- SILVER_NORMALISE → normalised silver tables present (SQL scripts via pg UDFs)
 
 Writes / side effects
 ---------------------

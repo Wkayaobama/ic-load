@@ -17,7 +17,7 @@ the stage transitions to SKIPPED.
 
 Upstream assumptions
 --------------------
-- DBT_TEST_SILVER → silver tables validated
+- SILVER_VALIDATE → silver tables validated
 - ENTITY_POSTPROCESS_PRE → any entity-specific prep complete
 
 Writes / side effects
@@ -55,23 +55,3 @@ Existing pipeline.dedupe module (on feature branches) contains the
 DedupeGuardrail class with scoring logic. Phase 2 delegates to it.
 """
 from __future__ import annotations
-
-from typing import Any
-
-
-def guard(entity: str, dry_run: bool = False) -> dict[str, Any]:
-    """Run dedupe probe for the given entity.
-
-    Phase 2 implementation sketch:
-        1. If entity not in MANIFEST postprocess registration for dedupe:
-            return {"mode": "not_applicable"}
-        2. Load staging.fct_{entity}_silver into pandas.
-        3. Run Levenshtein scoring over name/domain/phone tuples.
-        4. Bucket by SCORE_BANDS.
-        5. Write artifact JSON, return {"block_count": ..., "review_count": ...,
-           "safe_count": ..., "artifact_json": path, "mode": "live"}.
-    """
-    raise NotImplementedError(
-        f"pipeline.hooks.dedupe.guard — Phase 1 scaffolding. Called for entity={entity!r}. "
-        f"Phase 2: delegate to pipeline.dedupe.DedupeGuardrail.execute()."
-    )

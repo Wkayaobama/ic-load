@@ -1,17 +1,5 @@
 """Per-entity pipeline executor.
 
-Phase 2: PipelineHooks and build_default_hooks imported from pipeline.hooks.
-Phase 3: DBT_BUILD monolithic transition replaced by the five granular dbt
-stages (DBT_STAGING, DBT_INTERMEDIATE, DBT_TEST_SILVER, DBT_MARTS,
-DBT_TEST_MARTS). Added PG_FUNCTIONS_INSTALL at run start, ENTITY_POSTPROCESS
-before/after marts+assoc, and POST_RUN_VERIFY at run end.
-
-Hooks that have no implementation yet (pg_functions.install,
-entity_postprocess.dispatch, post_run_verify.verify) raise
-NotImplementedError; the runner catches this and transitions to SKIPPED
-with reason='hook_not_implemented_yet'. This keeps the full state machine
-visible in artifacts while Phase 4+ fills in the bodies.
-
 See IC_Load_Production_Plan.md §5.1 for the stage sequence.
 """
 from __future__ import annotations
@@ -26,7 +14,6 @@ from context.config import (
     load_business_rules,
     load_entity_resolution_map,
     load_schema_context,
-    resolve_dbt_selector,
 )
 from pipeline.hooks import PipelineHooks, build_default_hooks
 from pipeline.state import (
@@ -46,7 +33,6 @@ def run(
     skip_validation: bool = False,
     bronze_only: bool = False,
     silver_only: bool = False,
-    dbt_only: bool = False,
     assoc_only: bool = False,
     verbosity: str = "low",
     probe_mode: bool = False,
@@ -81,10 +67,10 @@ def run(
 
     # PG_FUNCTIONS_INSTALL runs once per run invocation (Contract A, §7.6).
     # Harmless repeat when the orchestrator also calls it up-front (CREATE OR REPLACE).
-    if not dbt_only and not _already_past(ctx, PipelineStage.PG_FUNCTIONS_INSTALL):
+    if not _already_past(ctx, PipelineStage.PG_FUNCTIONS_INSTALL):
         _run_pg_functions_install(ctx, dry_run, hooks)
 
-    if not dbt_only and not _already_past(ctx, PipelineStage.BRONZE_EXPORT):
+    if not _already_past(ctx, PipelineStage.BRONZE_EXPORT):
         _run_bronze(ctx, entity, dry_run, resume_stage, hooks, bronze_csv_override)
 
     if bronze_only:
@@ -92,7 +78,7 @@ def run(
         _finish(ctx)
         return ctx
 
-    if not dbt_only and not _already_past(ctx, PipelineStage.SILVER_VALIDATE):
+    if not _already_past(ctx, PipelineStage.SILVER_VALIDATE):
         _run_silver(ctx, entity, dry_run, skip_validation, owner_blocking, verbosity, hooks)
 
     if silver_only:
@@ -100,18 +86,10 @@ def run(
         _finish(ctx)
         return ctx
 
-    # Granular dbt silver stages — replaces the monolithic DBT_BUILD transition.
-    # Each reads its selector from MANIFEST.yaml:entities.{entity}.dbt_selectors.
-    _run_dbt_staging(ctx, entity, dry_run, hooks)
-    _run_dbt_intermediate(ctx, entity, dry_run, hooks)
-    _run_dbt_test_silver(ctx, entity, dry_run, hooks)
-
-    # Entity-specific pre-marts work (e.g. case materialize view).
+    # Entity-specific pre-gold work (e.g. case materialize view).
     _run_entity_postprocess(ctx, entity, "pre", dry_run, hooks)
 
-    # Granular dbt marts stages.
-    _run_dbt_marts(ctx, entity, dry_run, hooks)
-    _run_dbt_test_marts(ctx, entity, dry_run, hooks)
+    _run_dedupe_guard(ctx, entity, dry_run, probe_mode, hooks)
 
     # Gold gate: requires --approve-gold + pre-gold duplicate check.
     _run_gold_validate(ctx, entity, dry_run, approve_gold)
@@ -146,12 +124,14 @@ def _run_bronze(
     csv_path = Path(bronze_csv_override) if bronze_csv_override else latest_bronze_path(entity)
     if csv_path is None:
         transition(ctx, PipelineStage.BRONZE_LOAD, StageStatus.FAILED, reason="no_bronze_csv_found", entity=entity)
+        return
 
     if _should_run(ctx, PipelineStage.BRONZE_LOAD, resume_stage):
         try:
             rows = loader.load_csv_to_duckdb(str(csv_path), f"bronze_{entity}")
         except Exception as exc:
             transition(ctx, PipelineStage.BRONZE_LOAD, StageStatus.FAILED, reason=str(exc))
+            return
         transition(ctx, PipelineStage.BRONZE_LOAD, StageStatus.SUCCESS, row_count=rows, csv=str(csv_path))
 
     if _should_run(ctx, PipelineStage.BRONZE_METADATA, resume_stage):
@@ -159,14 +139,19 @@ def _run_bronze(
             loader.add_bronze_metadata(f"bronze_{entity}", str(csv_path))
         except Exception as exc:
             transition(ctx, PipelineStage.BRONZE_METADATA, StageStatus.FAILED, reason=str(exc))
+            return
         transition(ctx, PipelineStage.BRONZE_METADATA, StageStatus.SUCCESS)
 
     if _should_run(ctx, PipelineStage.BRONZE_WATERMARK, resume_stage):
-        try:
-            counts = loader._tag_load_status(f"bronze_{entity}", entity_cfg.primary_key)
-        except Exception as exc:
-            transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.FAILED, reason=str(exc))
-        transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SUCCESS, **counts)
+        if dry_run:
+            transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SKIPPED, reason="dry_run")
+        else:
+            try:
+                counts = loader._tag_load_status(f"bronze_{entity}", entity_cfg.primary_key)
+            except Exception as exc:
+                transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.FAILED, reason=str(exc))
+                return
+            transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SUCCESS, **counts)
 
     if _should_run(ctx, PipelineStage.BRONZE_EXPORT, resume_stage):
         if dry_run:
@@ -176,6 +161,7 @@ def _run_bronze(
                 exported = loader.export_to_postgres(f"bronze_{entity}", entity_cfg.staging_table)
             except Exception as exc:
                 transition(ctx, PipelineStage.BRONZE_EXPORT, StageStatus.FAILED, reason=str(exc))
+                return
             transition(ctx, PipelineStage.BRONZE_EXPORT, StageStatus.SUCCESS, exported=exported)
 
 
@@ -206,6 +192,8 @@ def _run_silver(
     if _should_run(ctx, PipelineStage.SILVER_VALIDATE, None):
         if skip_validation:
             transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SKIPPED, reason="skip_validation_flag")
+        elif dry_run:
+            transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
         else:
             _run_silver_validate(ctx, owner_blocking, verbosity, hooks)
 
@@ -265,16 +253,7 @@ def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: Pipeli
     if dry_run:
         transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.SKIPPED, reason="dry_run")
         return
-    try:
-        result = hooks.pg_functions_installer(False)
-    except NotImplementedError:
-        transition(
-            ctx,
-            PipelineStage.PG_FUNCTIONS_INSTALL,
-            StageStatus.SKIPPED,
-            reason="hook_not_implemented_yet",
-        )
-        return
+    result = hooks.pg_functions_installer(False)
     transition(
         ctx,
         PipelineStage.PG_FUNCTIONS_INSTALL,
@@ -282,105 +261,6 @@ def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: Pipeli
         installed=len(result.get("installed", [])),
         duration_s=result.get("duration_s"),
     )
-
-
-def _run_dbt_transition(
-    ctx: PipelineContext,
-    entity: str,
-    dry_run: bool,
-    hooks: PipelineHooks,
-    stage: PipelineStage,
-    selector: str,
-    command: Literal["run", "test"],
-) -> None:
-    """Shared handler for every granular dbt stage.
-
-    Calls hooks.dbt_runner with an explicit selector + command and maps the
-    result to a state-machine transition. Failures include exit_code and
-    stderr_tail so operators can diagnose from the artifact without
-    re-running dbt locally.
-    """
-    if not _should_run(ctx, stage, None):
-        return
-    if dry_run:
-        transition(ctx, stage, StageStatus.SKIPPED, reason="dry_run", selector=selector)
-        return
-    result = hooks.dbt_runner(entity, selector, command, False)
-    if result.get("exit_code", 0) != 0 or result.get("failed", 0) > 0:
-        transition(
-            ctx,
-            stage,
-            StageStatus.FAILED,
-            reason="dbt_nonzero_exit",
-            selector=selector,
-            command=command,
-            exit_code=result.get("exit_code"),
-            failed=result.get("failed", 0),
-            stderr_tail=result.get("stderr_tail", "")[:256],
-        )
-    transition(
-        ctx,
-        stage,
-        StageStatus.SUCCESS,
-        selector=selector,
-        command=command,
-        nodes=result.get("nodes", 0),
-        passed=result.get("passed", 0),
-        duration_s=result.get("duration_s"),
-    )
-
-
-def _run_dbt_staging(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
-    """DBT_STAGING — dbt run --select stg_{entity} (from MANIFEST)."""
-    try:
-        selector = resolve_dbt_selector(entity, "staging")
-    except RuntimeError as exc:
-        transition(ctx, PipelineStage.DBT_STAGING, StageStatus.FAILED, reason=str(exc))
-        return
-    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_STAGING, selector, "run")
-
-
-def _run_dbt_intermediate(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
-    """DBT_INTERMEDIATE — dbt run --select int_{entity}_reconciled."""
-    try:
-        selector = resolve_dbt_selector(entity, "intermediate")
-    except RuntimeError as exc:
-        transition(ctx, PipelineStage.DBT_INTERMEDIATE, StageStatus.FAILED, reason=str(exc))
-        return
-    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_INTERMEDIATE, selector, "run")
-
-
-def _run_dbt_test_silver(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
-    """DBT_TEST_SILVER — dbt test on staging + intermediate selectors combined."""
-    try:
-        stg_selector = resolve_dbt_selector(entity, "staging")
-        int_selector = resolve_dbt_selector(entity, "intermediate")
-    except RuntimeError as exc:
-        transition(ctx, PipelineStage.DBT_TEST_SILVER, StageStatus.FAILED, reason=str(exc))
-        return
-    # dbt accepts space-separated selectors in a single --select.
-    combined = f"{stg_selector} {int_selector}"
-    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_TEST_SILVER, combined, "test")
-
-
-def _run_dbt_marts(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
-    """DBT_MARTS — dbt run --select fct_{entity}_silver (and related marts)."""
-    try:
-        selector = resolve_dbt_selector(entity, "marts")
-    except RuntimeError as exc:
-        transition(ctx, PipelineStage.DBT_MARTS, StageStatus.FAILED, reason=str(exc))
-        return
-    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_MARTS, selector, "run")
-
-
-def _run_dbt_test_marts(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
-    """DBT_TEST_MARTS — dbt test on the marts selector."""
-    try:
-        selector = resolve_dbt_selector(entity, "marts")
-    except RuntimeError as exc:
-        transition(ctx, PipelineStage.DBT_TEST_MARTS, StageStatus.FAILED, reason=str(exc))
-        return
-    _run_dbt_transition(ctx, entity, dry_run, hooks, PipelineStage.DBT_TEST_MARTS, selector, "test")
 
 
 def _run_entity_postprocess(
@@ -406,11 +286,7 @@ def _run_entity_postprocess(
     if dry_run:
         transition(ctx, stage, StageStatus.SKIPPED, reason="dry_run", phase=phase)
         return
-    try:
-        result = hooks.entity_postprocessor(entity, phase, False)
-    except NotImplementedError:
-        transition(ctx, stage, StageStatus.SKIPPED, reason="hook_not_implemented_yet", phase=phase)
-        return
+    result = hooks.entity_postprocessor(entity, phase, False)
     mode = result.get("mode", "unknown")
     if mode == "not_applicable":
         transition(ctx, stage, StageStatus.SKIPPED, reason="no_postprocess_registered", phase=phase)
@@ -425,6 +301,61 @@ def _run_entity_postprocess(
     )
 
 
+def _run_dedupe_guard(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    probe_mode: bool,
+    hooks: PipelineHooks,
+) -> None:
+    if not _should_run(ctx, PipelineStage.DEDUPE_GUARD, None):
+        return
+
+    result = hooks.dedupe_guarder(entity, dry_run)
+    ctx.metadata["dedupe_guard"] = result
+
+    block_count = int(result.get("block_count", 0))
+    review_count = int(result.get("review_count", 0))
+    not_applicable = result.get("mode") == "not_applicable"
+
+    if not_applicable:
+        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="not_applicable", entity=entity)
+        return
+
+    if block_count > 0:
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            StageStatus.FAILED,
+            block_count=block_count,
+            review_count=review_count,
+            artifact=result.get("artifact_json"),
+        )
+
+    if review_count > 0:
+        status = StageStatus.WARNING if dry_run or probe_mode else StageStatus.FAILED
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            status,
+            block_count=block_count,
+            review_count=review_count,
+            safe_count=result.get("safe_count", 0),
+            artifact=result.get("artifact_json"),
+        )
+        return
+
+    transition(
+        ctx,
+        PipelineStage.DEDUPE_GUARD,
+        StageStatus.SUCCESS,
+        block_count=block_count,
+        review_count=review_count,
+        safe_count=result.get("safe_count", 0),
+        artifact=result.get("artifact_json"),
+    )
+
+
 def _run_post_run_verify(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
     """POST_RUN_VERIFY — reconciliation coverage + association coverage report.
 
@@ -436,16 +367,7 @@ def _run_post_run_verify(ctx: PipelineContext, entity: str, dry_run: bool, hooks
     if dry_run:
         transition(ctx, PipelineStage.POST_RUN_VERIFY, StageStatus.SKIPPED, reason="dry_run")
         return
-    try:
-        result = hooks.post_run_verifier(entity, False)
-    except NotImplementedError:
-        transition(
-            ctx,
-            PipelineStage.POST_RUN_VERIFY,
-            StageStatus.SKIPPED,
-            reason="hook_not_implemented_yet",
-        )
-        return
+    result = hooks.post_run_verifier(entity, False)
 
     reconciliation_rate = result.get("reconciliation_rate", 0.0)
     association_coverage = result.get("association_coverage", 0.0)
@@ -496,6 +418,9 @@ def _run_gold_validate(
         return
     if dry_run:
         transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
+        return
+    if ctx.metadata.get("probe_mode"):
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="probe_mode")
         return
 
     # Gate 1: explicit operator approval
@@ -556,8 +481,8 @@ def _run_gold_validate(
                              f"Run: SELECT {match_column}, COUNT(*) FROM {silver_table} GROUP BY {match_column} HAVING COUNT(*) > 1",
                     )
                     # FAILED raises — never reaches here.
-        except NotImplementedError:
-            # schema_context or db not available — skip gate 2, gate 1 was enough
+        except FileNotFoundError:
+            # schema_context YAML missing — skip gate 2, gate 1 was enough
             pass
         except Exception as exc:
             # DB error during check — warn but don't block (gate 1 passed).
@@ -660,7 +585,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-validation", action="store_true")
     parser.add_argument("--bronze-only", action="store_true")
     parser.add_argument("--silver-only", action="store_true")
-    parser.add_argument("--dbt-only", action="store_true")
     parser.add_argument("--assoc-only", action="store_true")
     parser.add_argument("--verbosity", choices=["high", "low"], default="low")
     parser.add_argument("--probe-mode", action="store_true")
@@ -684,7 +608,6 @@ if __name__ == "__main__":
         skip_validation=args.skip_validation,
         bronze_only=args.bronze_only,
         silver_only=args.silver_only,
-        dbt_only=args.dbt_only,
         assoc_only=args.assoc_only,
         verbosity=args.verbosity,
         probe_mode=args.probe_mode,
