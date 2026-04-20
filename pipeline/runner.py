@@ -1,8 +1,5 @@
 """Per-entity pipeline executor.
 
-Hooks that have no implementation yet raise NotImplementedError; the runner
-catches this and transitions to SKIPPED with reason='hook_not_implemented_yet'.
-
 See IC_Load_Production_Plan.md §5.1 for the stage sequence.
 """
 from __future__ import annotations
@@ -254,16 +251,7 @@ def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: Pipeli
     if dry_run:
         transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.SKIPPED, reason="dry_run")
         return
-    try:
-        result = hooks.pg_functions_installer(False)
-    except NotImplementedError:
-        transition(
-            ctx,
-            PipelineStage.PG_FUNCTIONS_INSTALL,
-            StageStatus.SKIPPED,
-            reason="hook_not_implemented_yet",
-        )
-        return
+    result = hooks.pg_functions_installer(False)
     transition(
         ctx,
         PipelineStage.PG_FUNCTIONS_INSTALL,
@@ -296,11 +284,7 @@ def _run_entity_postprocess(
     if dry_run:
         transition(ctx, stage, StageStatus.SKIPPED, reason="dry_run", phase=phase)
         return
-    try:
-        result = hooks.entity_postprocessor(entity, phase, False)
-    except NotImplementedError:
-        transition(ctx, stage, StageStatus.SKIPPED, reason="hook_not_implemented_yet", phase=phase)
-        return
+    result = hooks.entity_postprocessor(entity, phase, False)
     mode = result.get("mode", "unknown")
     if mode == "not_applicable":
         transition(ctx, stage, StageStatus.SKIPPED, reason="no_postprocess_registered", phase=phase)
@@ -326,16 +310,7 @@ def _run_post_run_verify(ctx: PipelineContext, entity: str, dry_run: bool, hooks
     if dry_run:
         transition(ctx, PipelineStage.POST_RUN_VERIFY, StageStatus.SKIPPED, reason="dry_run")
         return
-    try:
-        result = hooks.post_run_verifier(entity, False)
-    except NotImplementedError:
-        transition(
-            ctx,
-            PipelineStage.POST_RUN_VERIFY,
-            StageStatus.SKIPPED,
-            reason="hook_not_implemented_yet",
-        )
-        return
+    result = hooks.post_run_verifier(entity, False)
 
     reconciliation_rate = result.get("reconciliation_rate", 0.0)
     association_coverage = result.get("association_coverage", 0.0)
@@ -449,8 +424,8 @@ def _run_gold_validate(
                              f"Run: SELECT {match_column}, COUNT(*) FROM {silver_table} GROUP BY {match_column} HAVING COUNT(*) > 1",
                     )
                     # FAILED raises — never reaches here.
-        except NotImplementedError:
-            # schema_context or db not available — skip gate 2, gate 1 was enough
+        except FileNotFoundError:
+            # schema_context YAML missing — skip gate 2, gate 1 was enough
             pass
         except Exception as exc:
             # DB error during check — warn but don't block (gate 1 passed).
