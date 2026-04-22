@@ -26,6 +26,7 @@ BUSINESS_RULES_PATH = PROJECT_ROOT / "GomplateRepoMix" / "business_rules.yaml"
 SQL_TEMPLATE_DIR = PROJECT_ROOT / "sql" / "templates"
 SQL_RENDERED_DIR = PROJECT_ROOT / "sql" / "rendered"
 BENCHMARK_DIR = PROJECT_ROOT.parent / "benchmark"
+MANIFEST_PATH = PROJECT_ROOT / "MANIFEST.yaml"
 
 _BRONZE_PREFIX = {
     "communication": "Bronze_Communication",
@@ -101,6 +102,10 @@ def latest_bronze_path(entity: str) -> Path | None:
 
 def load_yaml(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def load_manifest() -> dict[str, Any]:
+    return load_yaml(MANIFEST_PATH)
 
 
 def load_schema_context() -> dict[str, Any]:

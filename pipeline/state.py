@@ -11,6 +11,7 @@ from context.config import ARTIFACTS_DIR, load_thresholds as _load_thresholds
 
 class PipelineStage(Enum):
     INIT = auto()
+    PG_FUNCTIONS_INSTALL = auto()
     BRONZE_LOAD = auto()
     BRONZE_METADATA = auto()
     BRONZE_WATERMARK = auto()

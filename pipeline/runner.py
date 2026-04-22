@@ -31,6 +31,7 @@ class PipelineHooks:
     bronze_loader_factory: Callable[[], Any]
     silver_normaliser_factory: Callable[[], Any]
     silver_validator_factory: Callable[[], Any]
+    pg_functions_installer: Callable[[bool], dict[str, Any]]
     dbt_runner: Callable[[str, bool], bool]
     dedupe_guarder: Callable[[str, bool], dict[str, Any]]
     gold_upserter: Callable[[str, bool], dict[str, Any]]
@@ -54,6 +55,7 @@ def build_default_hooks() -> PipelineHooks:
     from pipeline.bronze import DuckDBBronzeLoader
     from pipeline.dedupe import DedupeGuardrail
     from pipeline.gold import GoldUpsertExecutor
+    from pipeline.hooks.pg_functions import install as install_pg_functions
     from pipeline.silver import SilverNormaliser, SilverValidator
     from pipeline.sync import StackSyncCheckpoint
 
@@ -66,6 +68,7 @@ def build_default_hooks() -> PipelineHooks:
         bronze_loader_factory=DuckDBBronzeLoader,
         silver_normaliser_factory=SilverNormaliser,
         silver_validator_factory=SilverValidator,
+        pg_functions_installer=install_pg_functions,
         dbt_runner=_default_dbt_runner,
         dedupe_guarder=lambda entity, dry_run: dedupe_guardrail.execute(entity, dry_run=dry_run),
         gold_upserter=lambda entity, dry_run: gold_executor.execute(entity, dry_run=dry_run),
@@ -112,6 +115,9 @@ def run(
             ctx = PipelineContext.from_artifact(artifact)
         _skip_stages_before(ctx, resume_stage)
 
+    if not assoc_only and _should_run(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, resume_stage):
+        _run_pg_functions_install(ctx, dry_run, hooks)
+
     if assoc_only:
         _skip_stages_before(ctx, PipelineStage.ASSOC_VALIDATE)
         _run_assoc_validate(ctx, entity, dry_run, hooks)
@@ -153,6 +159,23 @@ def run(
     transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS)
     _finish(ctx)
     return ctx
+
+
+def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: PipelineHooks) -> None:
+    if dry_run:
+        transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.SKIPPED, reason="dry_run")
+        return
+    try:
+        result = hooks.pg_functions_installer(dry_run)
+    except Exception as exc:
+        transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.FAILED, reason=str(exc))
+    transition(
+        ctx,
+        PipelineStage.PG_FUNCTIONS_INSTALL,
+        StageStatus.SUCCESS,
+        installed=result.get("count"),
+        duration_s=result.get("duration_s"),
+    )
 
 
 def _run_bronze(
@@ -429,6 +452,7 @@ def _run_assoc_validate(ctx: PipelineContext, entity: str, dry_run: bool, hooks:
 
 def _skip_stages_before(ctx: PipelineContext, resume_stage: PipelineStage) -> None:
     ordered = [
+        PipelineStage.PG_FUNCTIONS_INSTALL,
         PipelineStage.BRONZE_LOAD,
         PipelineStage.BRONZE_METADATA,
         PipelineStage.BRONZE_WATERMARK,
