@@ -33,14 +33,16 @@ class PipelineStage(Enum):
     # Silver
     SILVER_NORMALISE = auto()               # 7
     SILVER_VALIDATE = auto()                # 8
+    SILVER_CSV_EXPORT = auto()              # 9  — silver_only + --csv path only
 
     # Entity-specific pre-gold postprocess (MANIFEST-driven)
-    ENTITY_POSTPROCESS_PRE = auto()         # 9
+    ENTITY_POSTPROCESS_PRE = auto()         # 10
 
     # Guardrails + Gold
     DEDUPE_GUARD = auto()                   # 16
     GOLD_VALIDATE = auto()                  # 17
-    GOLD_UPSERT = auto()                    # 18
+    GOLD_CSV_EXPORT = auto()                # 18  — gold_to_csv path only
+    GOLD_UPSERT = auto()                    # 19
 
     # Sync + Associations
     STACKSYNC_SYNC = auto()                 # 19

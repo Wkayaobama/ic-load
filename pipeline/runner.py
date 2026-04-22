@@ -33,6 +33,8 @@ def run(
     skip_validation: bool = False,
     bronze_only: bool = False,
     silver_only: bool = False,
+    csv_export: bool = False,
+    gold_only: bool = False,
     assoc_only: bool = False,
     verbosity: str = "low",
     probe_mode: bool = False,
@@ -82,6 +84,8 @@ def run(
         _run_silver(ctx, entity, dry_run, skip_validation, owner_blocking, verbosity, hooks)
 
     if silver_only:
+        if csv_export:
+            _run_silver_csv_export(ctx, entity)
         transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS, reason="silver_only_stop")
         _finish(ctx)
         return ctx
@@ -91,8 +95,17 @@ def run(
 
     _run_dedupe_guard(ctx, entity, dry_run, probe_mode, hooks)
 
+    if gold_only:
+        _run_gold_validate(ctx, entity, dry_run, approve_gold=True, approval_context="gold_only")
+        _run_gold_summary(ctx, entity)
+        if csv_export:
+            _run_gold_csv_export(ctx, entity)
+        transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS, reason="gold_only_stop")
+        _finish(ctx)
+        return ctx
+
     # Gold gate: requires --approve-gold + pre-gold duplicate check.
-    _run_gold_validate(ctx, entity, dry_run, approve_gold)
+    _run_gold_validate(ctx, entity, dry_run, approve_gold, approval_context="operator_approved")
     _run_gold_upsert(ctx, entity, dry_run, hooks)
     _run_stacksync_sync(ctx, entity, dry_run, hooks)
     _run_assoc_validate(ctx, entity, dry_run, hooks)
@@ -163,6 +176,69 @@ def _run_bronze(
                 transition(ctx, PipelineStage.BRONZE_EXPORT, StageStatus.FAILED, reason=str(exc))
                 return
             transition(ctx, PipelineStage.BRONZE_EXPORT, StageStatus.SUCCESS, exported=exported)
+
+
+def _run_silver_csv_export(ctx: PipelineContext, entity: str) -> None:
+    from context.config import ARTIFACTS_DIR
+    from pipeline.csv_export import export_silver_normalised
+    try:
+        out = export_silver_normalised(entity, ctx.run_id, ARTIFACTS_DIR)
+        transition(ctx, PipelineStage.SILVER_CSV_EXPORT, StageStatus.SUCCESS, csv_path=str(out))
+        print(f"  Silver CSV: {out}")
+    except Exception as exc:
+        transition(ctx, PipelineStage.SILVER_CSV_EXPORT, StageStatus.FAILED, reason=str(exc))
+
+
+def _run_gold_csv_export(ctx: PipelineContext, entity: str) -> None:
+    from context.config import ARTIFACTS_DIR
+    from pipeline.csv_export import export_gold_preview
+    try:
+        paths = export_gold_preview(entity, ctx.run_id, ARTIFACTS_DIR)
+        transition(ctx, PipelineStage.GOLD_CSV_EXPORT, StageStatus.SUCCESS, csv_paths=[str(p) for p in paths])
+        for p in paths:
+            print(f"  Gold preview CSV: {p}")
+    except Exception as exc:
+        transition(ctx, PipelineStage.GOLD_CSV_EXPORT, StageStatus.FAILED, reason=str(exc))
+
+
+def _run_gold_summary(ctx: PipelineContext, entity: str) -> None:
+    """Print row counts of what would be upserted — no file writes, no DB writes."""
+    from context.config import load_schema_context
+    from context.db import get_connection
+
+    print("\n  [GOLD PREVIEW] Rows that would be upserted:")
+    if entity.lower() == "communication":
+        schema = load_schema_context()
+        comm_cfg = schema.get("entities", {}).get("Communication", {})
+        bridge_tables: dict[str, str] = comm_cfg.get("bridge_tables", {})
+        for comm_type in ["Calls", "Notes", "Tasks", "Meetings"]:
+            table = bridge_tables.get(comm_type, f"staging.fct_communication_{comm_type.lower()}")
+            try:
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SELECT COUNT(*) FROM {table} WHERE icalps_communication_id IS NOT NULL")
+                        count = cur.fetchone()[0]
+                print(f"    communication ({comm_type.lower()}): {count} rows")
+            except Exception as exc:
+                print(f"    communication ({comm_type.lower()}): [WARNING] {exc}")
+    else:
+        _ENTITY_KEY = {"company": "Company", "contact": "Person", "opportunity": "Opportunity"}
+        schema_key = _ENTITY_KEY.get(entity.lower())
+        if schema_key is None:
+            print(f"    {entity}: [WARNING] unsupported entity for gold summary")
+            return
+        schema = load_schema_context()
+        cfg = schema["entities"][schema_key]
+        silver_table = cfg["silver_table"]
+        load_status_col = cfg["upsert"]["load_status_column"]
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT COUNT(*) FROM {silver_table}"
+                    f" WHERE {load_status_col} IN ('NEW', 'MODIFIED')"
+                )
+                count = cur.fetchone()[0]
+        print(f"    {entity}: {count} rows")
 
 
 def _run_silver(
@@ -397,6 +473,7 @@ def _run_gold_validate(
     entity: str,
     dry_run: bool,
     approve_gold: bool,
+    approval_context: str = "operator_approved",
 ) -> None:
     """GOLD_VALIDATE — two-gate check before any hubspot.* write.
 
@@ -491,8 +568,11 @@ def _run_gold_validate(
                 PipelineStage.GOLD_VALIDATE,
                 StageStatus.WARNING,
                 reason="pre_gold_check_error",
+                approval_context=approval_context,
                 error=str(exc)[:256],
-                note="Duplicate check failed but --approve-gold was set. Proceeding with caution.",
+                note="Duplicate check failed but --approve-gold was set. Proceeding with caution."
+                if approval_context == "operator_approved"
+                else "Duplicate check failed but approval_context=gold_only — no writes will occur.",
             )
             return
 
@@ -501,6 +581,7 @@ def _run_gold_validate(
         PipelineStage.GOLD_VALIDATE,
         StageStatus.SUCCESS,
         reason="gold_validation_passed",
+        approval_context=approval_context,
         approve_gold=True,
         duplicate_check="passed" if schema_entity else "skipped_no_schema_entity",
     )
@@ -585,6 +666,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-validation", action="store_true")
     parser.add_argument("--bronze-only", action="store_true")
     parser.add_argument("--silver-only", action="store_true")
+    parser.add_argument(
+        "--csv",
+        action="store_true",
+        dest="csv_export",
+        help="Export to CSV in artifacts/. Use with --silver-only or --gold-only.",
+    )
+    parser.add_argument(
+        "--gold-only",
+        action="store_true",
+        help="Run through gold validate and print a row-count preview of what would be upserted. "
+             "No HubSpot writes. Add --csv to also export to CSV files in artifacts/.",
+    )
     parser.add_argument("--assoc-only", action="store_true")
     parser.add_argument("--verbosity", choices=["high", "low"], default="low")
     parser.add_argument("--probe-mode", action="store_true")
@@ -608,6 +701,8 @@ if __name__ == "__main__":
         skip_validation=args.skip_validation,
         bronze_only=args.bronze_only,
         silver_only=args.silver_only,
+        csv_export=args.csv_export,
+        gold_only=args.gold_only,
         assoc_only=args.assoc_only,
         verbosity=args.verbosity,
         probe_mode=args.probe_mode,
