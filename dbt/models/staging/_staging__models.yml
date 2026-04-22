@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: stg_bronze_communication
+    description: "Cleaned and type-cast Bronze Communication data from IC'ALPS"
+    columns:
+      - name: communication_id
+        description: "Primary key - Comm_CommunicationId"
+        tests:
+          - not_null
+          - unique
+      - name: comm_action
+        description: "Action type (Meeting, EmailOut, PhoneOut, EmailIn, ToDo)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Meeting', 'EmailOut', 'PhoneOut', 'EmailIn', 'ToDo', 'Unknown']
+      - name: legacy_contact_id
+        description: "FK to Person (legacy contact ID)"
+      - name: legacy_company_id
+        description: "FK to Company (legacy company ID)"
+      - name: legacy_deal_id
+        description: "FK to Opportunity (legacy deal ID)"
+
+  - name: stg_hubspot_companies
+    description: "HubSpot companies from Gold layer"
+    columns:
+      - name: hubspot_company_id
+        tests: [not_null, unique]
+      - name: legacy_company_id
+        description: "Reconciliation key to IC'ALPS Comp_CompanyId"
+
+  - name: stg_hubspot_contacts
+    description: "HubSpot contacts from Gold layer"
+    columns:
+      - name: hubspot_contact_id
+        tests: [not_null, unique]
+      - name: legacy_contact_id
+        description: "Reconciliation key to IC'ALPS Pers_PersonId"
+
+  - name: stg_hubspot_deals
+    description: "HubSpot deals from Gold layer"
+    columns:
+      - name: hubspot_deal_id
+        tests: [not_null, unique]
+      - name: legacy_deal_id
+        description: "Reconciliation key to IC'ALPS Oppo_OpportunityId"

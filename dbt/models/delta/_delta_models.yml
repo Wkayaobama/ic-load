@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: silver_delta_opportunity
+    description: |
+      Silver layer transformation of delta opportunity records.
+      Applies computed columns and deal stage mapping business rules.
+    columns:
+      - name: opportunity_id
+        description: "Primary key (Oppo_OpportunityId)"
+        tests:
+          - unique
+          - not_null
+      - name: deal_name
+        description: "Opportunity description/name"
+      - name: weighted_forecast
+        description: "Computed: forecast_amount × (certainty / 100)"
+      - name: net_amount
+        description: "Computed: forecast_amount - cost"
+      - name: net_weighted_amount
+        description: "Computed: net_amount × (certainty / 100)"
+      - name: hubspot_dealstage
+        description: "Mapped deal stage (Closed Won, Closed Lost, In Progress)"
+        tests:
+          - accepted_values:
+              values: ['Closed Won', 'Closed Lost', 'In Progress']
+
+  - name: silver_delta_company
+    description: |
+      Silver layer transformation of delta company records.
+      Applies HubSpot property mapping and data normalization.
+    columns:
+      - name: company_id
+        description: "Primary key (Comp_CompanyId)"
+        tests:
+          - unique
+          - not_null
+      - name: name
+        description: "Company name"
+        tests:
+          - not_null
+      - name: hubspot_lifecyclestage
+        description: "Mapped lifecycle stage (customer, lead, other)"
+        tests:
+          - accepted_values:
+              values: ['customer', 'lead', 'other']

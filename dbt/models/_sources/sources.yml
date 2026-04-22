@@ -1,0 +1,183 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "Bronze layer CSV files from IC'ALPS extraction"
+    tables:
+      - name: communication
+        description: "Bronze Communication data (77,100 records)"
+        meta:
+          external_location: "read_csv_auto('{{ var('bronze_communication_path') }}')"
+        columns:
+          - name: Comm_CommunicationId
+            description: "Primary key"
+          - name: Comm_Action
+            description: "Action type (Meeting, EmailOut, PhoneOut, EmailIn, ToDo)"
+          - name: Comm_DateTime
+            description: "Activity timestamp"
+          - name: Comm_Subject
+            description: "Activity subject"
+          - name: Comm_Note
+            description: "Activity body/notes"
+          - name: Comm_Status
+            description: "Communication status"
+          - name: Person_Id
+            description: "FK to Person (legacy contact ID)"
+          - name: Company_Id
+            description: "FK to Company (legacy company ID)"
+          - name: Comm_OpportunityId
+            description: "FK to Opportunity (legacy deal ID)"
+          - name: Comm_CaseId
+            description: "FK to Case (legacy case ID)"
+          - name: Comm_OriginalDateTime
+            description: "Original start datetime"
+          - name: Comm_OriginalToDateTime
+            description: "Original end datetime"
+
+  - name: staging
+    description: "Silver-normalised staging tables in PostgreSQL (output of silver_normalise.py)"
+    schema: staging
+    tables:
+      - name: stg_company_normalised
+        description: "Company records with French→English enum normalisation, address concat, phone E.164"
+        columns:
+          - name: Comp_CompanyId
+            description: "Primary key — reconciliation key to hubspot.companies.icalps_company_id"
+          - name: icalps_companystatus
+            description: "Normalised status: Active | Inactive | Closed"
+          - name: icalps_companytype
+            description: "Normalised type: Customer | Supplier | Agent | Prospect"
+          - name: icalps_language
+            description: "ISO 639-1 language code: FR | EN | DE | ES"
+          - name: icalps_street_address
+            description: "Primary street address (Address_Street1, max 255 chars)"
+          - name: icalps_full_address
+            description: "Concatenated full address (Street1, Street2, City, PostCode, Country, max 500 chars)"
+          - name: icalps_country
+            description: "ISO 3166-1 alpha-2 country code"
+          - name: icalps_companyphone
+            description: "E.164 normalised phone"
+          - name: icalps_linkedin_url
+            description: "Validated LinkedIn URL (linkedin.com domain check)"
+          - name: icalps_ownerid_raw
+            description: "Owner email — join to staging.stg_owner_resolution to get hubspot_owner_id"
+
+      - name: stg_contact_normalised
+        description: "Contact records with status/email/phone/address/LinkedIn normalisation"
+        columns:
+          - name: Pers_PersonId
+            description: "Primary key — reconciliation key to hubspot.contacts.icalps_contact_id"
+          - name: icalps_pers_status
+            description: "Normalised status: Active | Inactive | Left | Retired"
+          - name: icalps_email
+            description: "Validated email (must contain @)"
+          - name: icalps_businessphone
+            description: "E.164 business phone"
+          - name: icalps_mobilephone
+            description: "E.164 mobile phone"
+          - name: icalps_title
+            description: "HTML-stripped title, truncated at 150 chars"
+          - name: icalps_street_address
+            description: "Primary street address"
+          - name: icalps_country
+            description: "ISO 3166-1 alpha-2 country code"
+          - name: icalps_linkedin_url
+            description: "Validated linkedin.com/in/ URL"
+
+      - name: stg_opportunity_normalised
+        description: "Deal records deduplicated, with cost/date/stage normalisation and computed columns"
+        columns:
+          - name: Oppo_OpportunityId
+            description: "Primary key — reconciliation key to hubspot.deals.icalps_deal_id"
+          - name: icalps_closedate
+            description: "ISO 8601 date (no time component)"
+          - name: icalps_forecast
+            description: "Forecast amount (k€)"
+          - name: icalps_certainty
+            description: "Certainty percentage 0–100"
+          - name: icalps_cost
+            description: "Cost (k€), currency-symbol stripped"
+          - name: cc_weighted
+            description: "forecast × certainty / 100"
+          - name: cc_net
+            description: "forecast − cost"
+          - name: cc_net_weighted
+            description: "(forecast − cost) × certainty / 100"
+          - name: hubspot_dealstage_name
+            description: "HubSpot stage name pre-computed at Bronze extraction"
+          - name: hubspot_pipeline_id
+            description: "HubSpot pipeline ID pre-computed at Bronze extraction"
+
+      - name: stg_communication_normalised
+        description: "Communication records with HTML-stripped subject/note"
+        columns:
+          - name: Comm_CommunicationId
+            description: "Primary key"
+          - name: Comm_Subject
+            description: "HTML-stripped subject"
+          - name: Comm_Note
+            description: "HTML-stripped note body"
+
+
+      - name: stg_owner_resolution
+        description: "Owner email → HubSpot owner ID lookup (built from hubspot.owners)"
+        columns:
+          - name: owner_email
+            description: "IC'ALPS user email (joins to Owner_Email / icalps_ownerid_raw)"
+          - name: hubspot_owner_id
+            description: "HubSpot owner ID for use in upsert scripts"
+
+  - name: silver
+    description: "Silver-layer tables loaded by standalone Python scripts (not dbt)"
+    schema: silver
+    tables:
+      - name: custom_object_tasks
+        description: >
+          Custom object task/note/appointment records re-ingested from HubSpot
+          name_communications export. Loaded by load_custom_object_tasks.py.
+          Source for stg_custom_object_tasks model only.
+
+  - name: hubspot
+    description: "HubSpot Gold layer (read-only via PostgreSQL)"
+    database: pg_hubspot
+    schema: hubspot
+    tables:
+      - name: companies
+        description: "HubSpot companies"
+        columns:
+          - name: id
+            description: "HubSpot internal ID (PK)"
+          - name: icalps_company_id
+            description: "Reconciliation key to IC'ALPS"
+          - name: stacksync_record_id_9vpp8v
+            description: "HubSpot Record ID for associations"
+          - name: name
+            description: "Company name"
+
+      - name: contacts
+        description: "HubSpot contacts"
+        columns:
+          - name: id
+            description: "HubSpot internal ID (PK)"
+          - name: icalps_contact_id
+            description: "Reconciliation key to IC'ALPS"
+          - name: stacksync_record_id_nd85zc
+            description: "HubSpot Record ID for associations"
+          - name: firstname
+            description: "Contact first name"
+          - name: lastname
+            description: "Contact last name"
+          - name: email
+            description: "Contact email"
+
+      - name: deals
+        description: "HubSpot deals"
+        columns:
+          - name: id
+            description: "HubSpot internal ID (PK)"
+          - name: icalps_deal_id
+            description: "Reconciliation key to IC'ALPS"
+          - name: stacksync_record_id_87b7vd
+            description: "HubSpot Record ID for associations"
+          - name: dealname
+            description: "Deal name"

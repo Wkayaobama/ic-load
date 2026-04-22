@@ -1,0 +1,13 @@
+ic_load_duckdb_postgres:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ':memory:'
+      attach:
+        - path: "postgres://{{ env_var('ICALPS_PGUSER') }}:{{ env_var('ICALPS_PGPASSWORD') }}@{{ env_var('ICALPS_PGHOST') }}:{{ env_var('ICALPS_PGPORT', '5432') }}/{{ env_var('ICALPS_PGDATABASE', 'postgres') }}"
+          type: postgres
+          alias: pg_hubspot
+      extensions:
+        - postgres_scanner
+      threads: 4
