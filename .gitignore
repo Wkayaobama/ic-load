@@ -1,4 +1,7 @@
 .devcontainer/devcontainer.env
+.env
+.env.*
+!.env.example
 repomix_bundle/
 rendered_sql/
 *.log
