@@ -22,6 +22,10 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
+# Pin cwd at the ic-load project root so every stage can import context/ and
+# pipeline/ regardless of where the driver was invoked from.
+Set-Location (Resolve-Path "$PSScriptRoot\..\..")
+
 . "$PSScriptRoot\_env.ps1"
 
 New-Item -Path "artifacts/ops" -ItemType Directory -Force | Out-Null

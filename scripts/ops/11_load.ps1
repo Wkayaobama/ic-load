@@ -9,6 +9,7 @@ param(
     [switch]$Confirm
 )
 $ErrorActionPreference = "Stop"
+Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 
 if (-not $Entity -or -not $Confirm) {
     Write-Host "USAGE: .\scripts\ops\11_load.ps1 -Entity <name> -Confirm" -ForegroundColor Yellow

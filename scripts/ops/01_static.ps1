@@ -1,6 +1,7 @@
 # 01_static — Python import + parse check. No DB.
 # Emits artifacts/ops/01_static.csv: module,status,error
 $ErrorActionPreference = "Stop"
+Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 
 $out = "artifacts/ops/01_static.csv"
 New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null

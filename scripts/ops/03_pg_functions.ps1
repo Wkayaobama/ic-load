@@ -2,6 +2,7 @@
 # Idempotent (CREATE OR REPLACE / IF NOT EXISTS).
 # Emits artifacts/ops/03_pg_functions.csv: schema,function,installed,verified
 $ErrorActionPreference = "Stop"
+Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 
 $out = "artifacts/ops/03_pg_functions.csv"
 New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null

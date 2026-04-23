@@ -1,5 +1,6 @@
 # 02_db — DB connectivity smoke. No CSV (boolean result, stdout only).
 $ErrorActionPreference = "Stop"
+Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 
 python -c @'
 from context.db import get_connection

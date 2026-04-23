@@ -2,6 +2,7 @@
 # Emits artifacts/probe_post_dbt.csv and artifacts/ops/08_diff.csv
 #   (8_diff columns: side,schema,table,column,detail — side ∈ {pre_only,post_only,common_changed})
 $ErrorActionPreference = "Stop"
+Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 
 $pre  = "artifacts/probe_pre_dbt.csv"
 $post = "artifacts/probe_post_dbt.csv"

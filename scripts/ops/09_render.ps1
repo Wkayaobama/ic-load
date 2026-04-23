@@ -1,6 +1,7 @@
 # 09_render — static render.py check (no DB).
 # Emits artifacts/ops/09_render.csv: kind,name,length,sha1
 $ErrorActionPreference = "Stop"
+Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 
 $out = "artifacts/ops/09_render.csv"
 New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null

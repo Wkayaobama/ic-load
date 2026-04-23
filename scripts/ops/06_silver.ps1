@@ -1,34 +1,35 @@
 # 06_silver — run SilverNormaliser.normalise_<entity> in PARALLEL.
 # Emits artifacts/ops/06_silver_<entity>.csv: table,row_count,distinct_pk,null_pk
 $ErrorActionPreference = "Stop"
+$root = Resolve-Path "$PSScriptRoot\..\.."
+Set-Location $root
 
 $entities = @('company', 'contact', 'opportunity', 'communication')
 $outDir = "artifacts/ops"
 New-Item -Path $outDir -ItemType Directory -Force | Out-Null
 
-# Map entity → (normalised table, primary key column)
-# Matches load_entity_translation_contract() in context/config.py
+# entity → (normalised table, primary key column) — matches
+# load_entity_translation_contract() in context/config.py
 $meta = @{
-    'company'       = @{ table = 'staging.stg_company_normalised';       pk = 'comp_companyid'        }
-    'contact'       = @{ table = 'staging.stg_contact_normalised';       pk = 'pers_personid'         }
-    'opportunity'   = @{ table = 'staging.stg_opportunity_normalised';   pk = 'oppo_opportunityid'    }
-    'communication' = @{ table = 'staging.stg_communication_normalised'; pk = 'comm_communicationid'  }
+    'company'       = @{ table = 'staging.stg_company_normalised';       pk = 'comp_companyid'       }
+    'contact'       = @{ table = 'staging.stg_contact_normalised';       pk = 'pers_personid'        }
+    'opportunity'   = @{ table = 'staging.stg_opportunity_normalised';   pk = 'oppo_opportunityid'   }
+    'communication' = @{ table = 'staging.stg_communication_normalised'; pk = 'comm_communicationid' }
 }
 
 $results = $entities | ForEach-Object -ThrottleLimit 4 -Parallel {
     $e     = $_
-    $table = ($using:meta)[$e].table
-    $pk    = ($using:meta)[$e].pk
-    $out   = "artifacts/ops/06_silver_$e.csv"
-
-    # Propagate DB env
+    Set-Location $using:root
     $env:ICALPS_PGHOST     = $using:env:ICALPS_PGHOST
     $env:ICALPS_PGUSER     = $using:env:ICALPS_PGUSER
     $env:ICALPS_PGPASSWORD = $using:env:ICALPS_PGPASSWORD
     $env:ICALPS_PGPORT     = $using:env:ICALPS_PGPORT
     $env:ICALPS_PGDATABASE = $using:env:ICALPS_PGDATABASE
 
-    # Run normaliser then snapshot table health.
+    $table = ($using:meta)[$e].table
+    $pk    = ($using:meta)[$e].pk
+    $out   = "artifacts/ops/06_silver_$e.csv"
+
     python -c @"
 import csv, sys
 from pipeline.silver import SilverNormaliser
@@ -51,15 +52,16 @@ w = csv.writer(sys.stdout)
 w.writerow(['table','row_count','distinct_pk','null_pk'])
 w.writerow([f'{schema}.{table}', rc, distinct_pk, null_pk])
 "@ > $out
+    $pyExit = $LASTEXITCODE
 
-    [pscustomobject]@{ entity = $e; exit = $LASTEXITCODE; csv = $out }
+    [pscustomobject]@{ entity = $e; exit = $pyExit; csv = $out }
 }
 
-$results | Format-Table | Out-String | Write-Host
+$results | Format-Table -AutoSize | Out-String | Write-Host
 
 $bad = $results | Where-Object exit -ne 0
 if ($bad) {
-    Write-Host "silver failed for: $($bad.entity -join ',')" -ForegroundColor Red
+    Write-Host "silver FAIL for: $($bad.entity -join ',')" -ForegroundColor Red
     exit 1
 }
 Write-Host "silver csvs: $outDir/06_silver_<entity>.csv" -ForegroundColor Green

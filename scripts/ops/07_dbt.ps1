@@ -2,6 +2,7 @@
 # Emits artifacts/ops/07_dbt.csv from target/run_results.json:
 #   unique_id,status,rows_affected,execution_time
 $ErrorActionPreference = "Stop"
+Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 
 $out = "artifacts/ops/07_dbt.csv"
 New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null
