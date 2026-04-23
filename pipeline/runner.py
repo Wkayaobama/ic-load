@@ -37,6 +37,10 @@ class PipelineHooks:
     gold_upserter: Callable[[str, bool], dict[str, Any]]
     sync_waiter: Callable[[str, bool], dict[str, Any]]
     association_runner: Callable[[str, bool], dict[str, Any]]
+    # Preview hooks: execute SELECT portion read-only, emit candidate-row CSVs.
+    # Used when the runner is invoked with --preview. No hubspot.* writes.
+    gold_previewer: Callable[[str], dict[str, Any]]
+    association_previewer: Callable[[str], dict[str, Any]]
 
 
 def _default_dbt_runner(entity: str, dry_run: bool) -> bool:
@@ -51,6 +55,7 @@ def _default_dbt_runner(entity: str, dry_run: bool) -> bool:
 
 
 def build_default_hooks() -> PipelineHooks:
+    from context.db import get_connection
     from pipeline.associations import AssociationBridgeExecutor
     from pipeline.bronze import DuckDBBronzeLoader
     from pipeline.dedupe import DedupeGuardrail
@@ -58,6 +63,36 @@ def build_default_hooks() -> PipelineHooks:
     from pipeline.hooks.pg_functions import install as install_pg_functions
     from pipeline.silver import SilverNormaliser, SilverValidator
     from pipeline.sync import StackSyncCheckpoint
+
+    # ── Live SQL callables ─────────────────────────────────────────────────
+    # Gold upsert and association bridge both render SQL via sql.render.* and
+    # need an executor to land INSERTs in Postgres. Previously no callable
+    # was passed, so render output was written to disk but never executed —
+    # leaving the pipeline's final step a no-op. These two closures provide:
+    #
+    #   _execute_sql(sql_text) → int       used by .execute(): runs INSERT, returns rowcount
+    #   _execute_sql_fetch(sql_text)       used by .preview(): runs SELECT, returns (columns, rows)
+    #
+    # Both open/commit/close their own transaction; no shared state.
+    def _execute_sql(sql_text: str) -> int:
+        with get_connection() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql_text)
+                    rc = cur.rowcount if cur.rowcount is not None else 0
+                conn.commit()
+                return rc
+            except Exception:
+                conn.rollback()
+                raise
+
+    def _execute_sql_fetch(sql_text: str) -> tuple[list[str], list[tuple]]:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql_text)
+                columns = [d[0] for d in cur.description] if cur.description else []
+                rows = cur.fetchall() if cur.description else []
+        return columns, rows
 
     dedupe_guardrail = DedupeGuardrail()
     gold_executor = GoldUpsertExecutor()
@@ -71,9 +106,15 @@ def build_default_hooks() -> PipelineHooks:
         pg_functions_installer=install_pg_functions,
         dbt_runner=_default_dbt_runner,
         dedupe_guarder=lambda entity, dry_run: dedupe_guardrail.execute(entity, dry_run=dry_run),
-        gold_upserter=lambda entity, dry_run: gold_executor.execute(entity, dry_run=dry_run),
+        gold_upserter=lambda entity, dry_run: gold_executor.execute(
+            entity, dry_run=dry_run, execute_sql=None if dry_run else _execute_sql
+        ),
         sync_waiter=lambda entity, dry_run: sync_checkpoint.wait(entity, dry_run=dry_run),
-        association_runner=lambda entity, dry_run: assoc_executor.execute(entity, dry_run=dry_run),
+        association_runner=lambda entity, dry_run: assoc_executor.execute(
+            entity, dry_run=dry_run, execute_sql=None if dry_run else _execute_sql
+        ),
+        gold_previewer=lambda entity: gold_executor.preview(entity, execute_sql_fetch=_execute_sql_fetch),
+        association_previewer=lambda entity: assoc_executor.preview(entity, execute_sql_fetch=_execute_sql_fetch),
     )
 
 
@@ -91,6 +132,7 @@ def run(
     enable_post_gold: bool = False,
     approve_gold: bool = False,
     enable_dedupe_guard: bool = False,
+    preview: bool = False,
     hooks: PipelineHooks | None = None,
     bronze_csv_override: str | None = None,
 ) -> PipelineContext:
@@ -104,6 +146,7 @@ def run(
     ctx.metadata["enable_post_gold"] = enable_post_gold
     ctx.metadata["approve_gold"] = approve_gold
     ctx.metadata["enable_dedupe_guard"] = enable_dedupe_guard
+    ctx.metadata["preview"] = preview
     ctx.metadata["entity_resolution_map"] = load_entity_resolution_map()
     ctx.metadata["business_rules"] = load_business_rules()
 
@@ -120,7 +163,7 @@ def run(
 
     if assoc_only:
         _skip_stages_before(ctx, PipelineStage.ASSOC_VALIDATE)
-        _run_assoc_validate(ctx, entity, dry_run, hooks)
+        _run_assoc_validate(ctx, entity, dry_run, preview, hooks)
         transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS, reason="assoc_only_stop")
         _finish(ctx)
         return ctx
@@ -145,8 +188,8 @@ def run(
     # mirrored associations stay available behind an explicit opt-in.
     _run_dbt(ctx, entity, dry_run, hooks)
     _run_dedupe_guard(ctx, entity, dry_run, probe_mode, enable_dedupe_guard, hooks)
-    _run_gold_validate(ctx, entity, dry_run, probe_mode, approve_gold)
-    _run_gold_upsert(ctx, entity, dry_run, hooks)
+    _run_gold_validate(ctx, entity, dry_run, probe_mode, approve_gold, preview)
+    _run_gold_upsert(ctx, entity, dry_run, preview, hooks)
 
     if not enable_post_gold:
         transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS, reason="gold_upsert_stop")
@@ -154,7 +197,7 @@ def run(
         return ctx
 
     _run_stacksync_sync(ctx, entity, dry_run, hooks)
-    _run_assoc_validate(ctx, entity, dry_run, hooks)
+    _run_assoc_validate(ctx, entity, dry_run, preview, hooks)
 
     transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS)
     _finish(ctx)
@@ -378,10 +421,15 @@ def _run_dedupe_guard(
     )
 
 
-def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, preview: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.GOLD_UPSERT, None):
         return
-    result = hooks.gold_upserter(entity, dry_run)
+    if preview:
+        # Preview mode: executes SELECT portion read-only, writes candidate
+        # rows to artifacts/ops/gold_preview_*.csv. No hubspot.* INSERT.
+        result = hooks.gold_previewer(entity)
+    else:
+        result = hooks.gold_upserter(entity, dry_run)
     transition(
         ctx,
         PipelineStage.GOLD_UPSERT,
@@ -397,6 +445,7 @@ def _run_gold_validate(
     dry_run: bool,
     probe_mode: bool,
     approve_gold: bool,
+    preview: bool,
 ) -> None:
     del entity
     if not _should_run(ctx, PipelineStage.GOLD_VALIDATE, None):
@@ -408,6 +457,12 @@ def _run_gold_validate(
 
     if probe_mode:
         transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="probe_mode")
+        return
+
+    if preview:
+        # Preview runs SELECT only; the --approve-gold safety gate is only
+        # meaningful for actual INSERT execution. Skip it in preview mode.
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="preview_mode")
         return
 
     if not approve_gold:
@@ -437,10 +492,16 @@ def _run_stacksync_sync(ctx: PipelineContext, entity: str, dry_run: bool, hooks:
     transition(ctx, PipelineStage.STACKSYNC_SYNC, status, **result)
 
 
-def _run_assoc_validate(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+def _run_assoc_validate(ctx: PipelineContext, entity: str, dry_run: bool, preview: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.ASSOC_VALIDATE, None):
         return
-    result = hooks.association_runner(entity, dry_run)
+    if preview:
+        # Preview mode: executes Pass-A-UNION-Pass-B SELECT read-only, writes
+        # candidate associations to artifacts/ops/assoc_preview_*.csv.
+        # No hubspot.associations_*_* INSERT.
+        result = hooks.association_previewer(entity)
+    else:
+        result = hooks.association_runner(entity, dry_run)
     transition(
         ctx,
         PipelineStage.ASSOC_VALIDATE,
@@ -502,6 +563,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--enable-post-gold", action="store_true")
     parser.add_argument("--approve-gold", action="store_true")
     parser.add_argument("--enable-dedupe-guard", action="store_true")
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Execute SELECT portion of gold upsert / association bridge read-only; "
+             "write candidate rows to artifacts/ops/. No hubspot.* writes. "
+             "Skips --approve-gold gate (only relevant for real INSERTs).",
+    )
     parser.add_argument("--bronze-csv-override")
     return parser.parse_args()
 
@@ -522,5 +590,6 @@ if __name__ == "__main__":
         enable_post_gold=args.enable_post_gold,
         approve_gold=args.approve_gold,
         enable_dedupe_guard=args.enable_dedupe_guard,
+        preview=args.preview,
         bronze_csv_override=args.bronze_csv_override,
     )

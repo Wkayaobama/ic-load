@@ -1,13 +1,13 @@
-        -- Rendered SQL engagement upsert
-        -- Communication type: Calls
-        -- Run ID: 20260327_120000
-        -- Invariant: deterministic unique_id and NOT EXISTS idempotency guard.
+-- Rendered SQL engagement upsert
+-- Communication type: Calls
+-- Run ID: 20260327_120000
+-- Invariant: deterministic unique_id and NOT EXISTS idempotency guard.
 
-        INSERT INTO hubspot.calls (
-    call_title, call_notes, activity_date, call_direction, call_status,
-    call_duration, unique_id, engagement_source
-)
-SELECT
+INSERT INTO hubspot.calls (
+            call_title, call_notes, activity_date, call_direction, call_status,
+            call_duration, unique_id, engagement_source
+        )
+        SELECT
     hs_call_title,
     hs_call_body,
     hs_timestamp,
