@@ -229,6 +229,23 @@ def _run_bronze(
     hooks: PipelineHooks,
     bronze_csv_override: str | None,
 ) -> None:
+    # Dry-run contract: touch nothing. Skip all four BRONZE_* stages as a
+    # block so a fresh clone without bronze_layer co-located can still
+    # validate the stage wiring end-to-end without a CSV lookup or DuckDB
+    # load. Previously _run_bronze called latest_bronze_path() first and
+    # transitioned to FAILED when it returned None, which killed the
+    # pipeline regardless of the dry_run flag.
+    if dry_run:
+        for stage in (
+            PipelineStage.BRONZE_LOAD,
+            PipelineStage.BRONZE_METADATA,
+            PipelineStage.BRONZE_WATERMARK,
+            PipelineStage.BRONZE_EXPORT,
+        ):
+            if _should_run(ctx, stage, resume_stage):
+                transition(ctx, stage, StageStatus.SKIPPED, reason="dry_run")
+        return
+
     loader = hooks.bronze_loader_factory()
     entity_cfg = ENTITIES.get(entity)
     if entity_cfg is None:
@@ -297,6 +314,9 @@ def _run_silver(
     if _should_run(ctx, PipelineStage.SILVER_VALIDATE, None):
         if skip_validation:
             transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SKIPPED, reason="skip_validation_flag")
+        elif dry_run:
+            # Validators query Postgres — skip in dry-run to keep it DB-free.
+            transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
         else:
             _run_silver_validate(ctx, owner_blocking, verbosity, hooks)
 
@@ -424,6 +444,12 @@ def _run_dedupe_guard(
 def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, preview: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.GOLD_UPSERT, None):
         return
+    if dry_run:
+        # Dry-run contract: executor .execute() would still render SQL to
+        # sql/rendered/ even with execute_sql=None. Skip the stage entirely
+        # so dry-run produces zero filesystem side effects.
+        transition(ctx, PipelineStage.GOLD_UPSERT, StageStatus.SKIPPED, reason="dry_run")
+        return
     if preview:
         # Preview mode: executes SELECT portion read-only, writes candidate
         # rows to artifacts/ops/gold_preview_*.csv. No hubspot.* INSERT.
@@ -484,6 +510,11 @@ def _run_gold_validate(
 def _run_stacksync_sync(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.STACKSYNC_SYNC, None):
         return
+    if dry_run:
+        # StackSyncCheckpoint.wait hits the DB to verify mirror freshness.
+        # Skip in dry-run — we're validating wiring, not mirror state.
+        transition(ctx, PipelineStage.STACKSYNC_SYNC, StageStatus.SKIPPED, reason="dry_run")
+        return
     try:
         result = hooks.sync_waiter(entity, dry_run)
     except Exception as exc:
@@ -494,6 +525,11 @@ def _run_stacksync_sync(ctx: PipelineContext, entity: str, dry_run: bool, hooks:
 
 def _run_assoc_validate(ctx: PipelineContext, entity: str, dry_run: bool, preview: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.ASSOC_VALIDATE, None):
+        return
+    if dry_run:
+        # Dry-run contract: AssociationBridgeExecutor.execute() still renders
+        # SQL to sql/rendered/ even with execute_sql=None. Skip entirely.
+        transition(ctx, PipelineStage.ASSOC_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
         return
     if preview:
         # Preview mode: executes Pass-A-UNION-Pass-B SELECT read-only, writes
