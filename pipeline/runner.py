@@ -93,7 +93,7 @@ def run(
     # Entity-specific pre-gold work (e.g. case materialize view).
     _run_entity_postprocess(ctx, entity, "pre", dry_run, hooks)
 
-    _run_dedupe_guard(ctx, entity, dry_run, probe_mode, hooks)
+    _run_dedupe_guard(ctx, entity, dry_run, probe_mode, hooks, gold_only=gold_only)
 
     if gold_only:
         _run_gold_validate(ctx, entity, dry_run, approve_gold=True, approval_context="gold_only")
@@ -383,6 +383,7 @@ def _run_dedupe_guard(
     dry_run: bool,
     probe_mode: bool,
     hooks: PipelineHooks,
+    gold_only: bool = False,
 ) -> None:
     if not _should_run(ctx, PipelineStage.DEDUPE_GUARD, None):
         return
@@ -399,17 +400,30 @@ def _run_dedupe_guard(
         return
 
     if block_count > 0:
+        if gold_only:
+            transition(
+                ctx,
+                PipelineStage.DEDUPE_GUARD,
+                StageStatus.WARNING,
+                block_count=block_count,
+                review_count=review_count,
+                note="blocking pairs found — gold upsert would be blocked on a live run",
+                artifact_json=result.get("artifact_json"),
+                artifact_csv=result.get("artifact_csv"),
+            )
+            return
         transition(
             ctx,
             PipelineStage.DEDUPE_GUARD,
             StageStatus.FAILED,
             block_count=block_count,
             review_count=review_count,
-            artifact=result.get("artifact_json"),
+            artifact_json=result.get("artifact_json"),
+            artifact_csv=result.get("artifact_csv"),
         )
 
     if review_count > 0:
-        status = StageStatus.WARNING if dry_run or probe_mode else StageStatus.FAILED
+        status = StageStatus.WARNING if dry_run or probe_mode or gold_only else StageStatus.FAILED
         transition(
             ctx,
             PipelineStage.DEDUPE_GUARD,
@@ -417,7 +431,8 @@ def _run_dedupe_guard(
             block_count=block_count,
             review_count=review_count,
             safe_count=result.get("safe_count", 0),
-            artifact=result.get("artifact_json"),
+            artifact_json=result.get("artifact_json"),
+            artifact_csv=result.get("artifact_csv"),
         )
         return
 
@@ -428,7 +443,8 @@ def _run_dedupe_guard(
         block_count=block_count,
         review_count=review_count,
         safe_count=result.get("safe_count", 0),
-        artifact=result.get("artifact_json"),
+        artifact_json=result.get("artifact_json"),
+        artifact_csv=result.get("artifact_csv"),
     )
 
 

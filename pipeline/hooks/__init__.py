@@ -55,7 +55,7 @@ class PipelineHooks:
     # Dispatches via MANIFEST.yaml entities.{entity}.postprocess.{phase}
     entity_postprocessor: Callable[[str, Literal["pre", "post"], bool], dict[str, Any]]
 
-    # Dedupe — DEDUPE_GUARD (opportunity-only by default)
+    # Dedupe — DEDUPE_GUARD (opportunity + contact)
     dedupe_guarder: Callable[[str, bool], dict[str, Any]]
 
     # Gold — GOLD_UPSERT (GOLD_VALIDATE is inline in runner, no hook)
@@ -97,8 +97,8 @@ def build_default_hooks() -> PipelineHooks:
         pg_functions_installer=pg_functions.install,
         entity_postprocessor=entity_postprocess.dispatch,
         dedupe_guarder=lambda entity, dry_run: (
-            pipeline_dedupe.run_probe(dry_run)
-            if entity == "opportunity"
+            pipeline_dedupe.run_probe(entity, dry_run)
+            if entity in ("opportunity", "contact")
             else {"mode": "not_applicable"}
         ),
         gold_upserter=gold.upsert,
