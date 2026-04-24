@@ -6,7 +6,7 @@ Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 $out = "artifacts/ops/09_render.csv"
 New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null
 
-python -c @'
+uv run python -c @'
 import csv, hashlib, sys
 from sql.render import render_entity_upsert, render_engagement_upsert, render_association_bridge
 

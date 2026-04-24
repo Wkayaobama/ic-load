@@ -22,11 +22,11 @@ $results = $entities | ForEach-Object -ThrottleLimit 5 -Parallel {
     $out = "artifacts/ops/04_dry_run_$e.csv"
     $log = "artifacts/ops/04_dry_run_$e.log"
 
-    python -m pipeline.runner --entity $e --dry-run *>$log
+    uv run python -m pipeline.runner --entity $e --dry-run *>$log
     $runnerExit = $LASTEXITCODE
 
     # Parse the most recent artifact — only if runner actually produced one.
-    python -c @"
+    uv run python -c @"
 import csv, json, sys, glob
 entity = '$e'
 files = sorted(glob.glob(f'artifacts/pipeline_run_{entity}_*.json'))

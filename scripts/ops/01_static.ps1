@@ -6,7 +6,7 @@ Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 $out = "artifacts/ops/01_static.csv"
 New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null
 
-python -c @'
+uv run python -c @'
 import csv, sys
 modules = [
     "pipeline.state",

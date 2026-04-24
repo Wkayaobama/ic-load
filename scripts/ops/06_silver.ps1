@@ -30,7 +30,7 @@ $results = $entities | ForEach-Object -ThrottleLimit 4 -Parallel {
     $pk    = ($using:meta)[$e].pk
     $out   = "artifacts/ops/06_silver_$e.csv"
 
-    python -c @"
+    uv run python -c @"
 import csv, sys
 from pipeline.silver import SilverNormaliser
 from context.db import get_connection

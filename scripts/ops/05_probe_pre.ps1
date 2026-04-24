@@ -6,5 +6,5 @@ Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 $out = "artifacts/probe_pre_dbt.csv"
 New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null
 
-python scripts/probe_schemas.py --output $out
+uv run python scripts/probe_schemas.py --output $out
 exit $LASTEXITCODE

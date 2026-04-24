@@ -2,7 +2,7 @@
 $ErrorActionPreference = "Stop"
 Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 
-python -c @'
+uv run python -c @'
 from context.db import get_connection
 with get_connection() as conn:
     with conn.cursor() as cur:

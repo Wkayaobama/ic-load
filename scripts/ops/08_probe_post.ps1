@@ -9,7 +9,7 @@ $post = "artifacts/probe_post_dbt.csv"
 $diff = "artifacts/ops/08_diff.csv"
 New-Item -Path (Split-Path $diff) -ItemType Directory -Force | Out-Null
 
-python scripts/probe_schemas.py --output $post
+uv run python scripts/probe_schemas.py --output $post
 if ($LASTEXITCODE -ne 0) { Write-Host "probe_post failed" -ForegroundColor Red; exit 1 }
 
 if (-not (Test-Path $pre)) {
@@ -17,7 +17,7 @@ if (-not (Test-Path $pre)) {
     exit 0
 }
 
-python -c @"
+uv run python -c @"
 import csv, sys
 
 def rows(path):

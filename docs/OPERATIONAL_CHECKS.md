@@ -4,7 +4,7 @@ Sequential validation playbook for the `w/foundation-restore` branch.
 Every command is **PowerShell 7+ (`pwsh`)** and copy-pasteable from `ic-load\`
 as the working directory. Later sections depend on earlier sections passing.
 
-Requires: PowerShell 7 (`pwsh.exe`). `powershell.exe` (Windows PowerShell 5.1)
+Requires: PowerShell 7 (`pwsh.exe`) + `uv`. `powershell.exe` (Windows PowerShell 5.1)
 works for most blocks but its here-strings and `ForEach-Object -Parallel` behave
 differently. If you're on 5.1, install 7 from `winget install Microsoft.PowerShell`.
 
@@ -14,9 +14,23 @@ future work; the semantics match.
 
 ---
 
-## 0. Prerequisites — environment
+## 0. Prerequisites — install uv + set env vars
 
-Change directory and set required env vars for the current session.
+**One-time: install `uv`.** Every script invokes `uv run python ...` which
+resolves deps from `pyproject.toml` into a local `.venv/`. No `pip install`,
+no venv activation required — uv is self-contained.
+
+```powershell
+winget install --id=astral-sh.uv                       # Windows
+# macOS:  brew install uv
+# Linux:  curl -LsSf https://astral.sh/uv/install.sh | sh
+uv --version                                           # expect: uv 0.4+
+```
+
+On first `uv run` in the repo, uv builds `.venv/` from `pyproject.toml`
+automatically — `~5-15s` for the first call, cached after that.
+
+**Change directory and set required env vars for the current session.**
 
 ```powershell
 Set-Location ic-load
@@ -27,7 +41,7 @@ $env:ICALPS_PGPORT     = "5432"
 $env:ICALPS_PGDATABASE = "postgres"
 $env:ICALPS_PGUSER     = "postgres"
 $env:ICALPS_PGPASSWORD = "<rotated-secret>"     # rotate before running — see SECURITY NOTE in .env comments
-$env:ICALPS_DBT_COMMAND = "dbt build --project-dir dbt --profiles-dir dbt"
+$env:ICALPS_DBT_COMMAND = "uv run --extra dbt dbt build --project-dir dbt --profiles-dir dbt"
 
 # Option B — load from a local .env (use only if .env exists and is gitignored)
 Get-Content .env |
@@ -51,7 +65,7 @@ Get-ChildItem env:ICALPS_* | Measure-Object | Select-Object -ExpandProperty Coun
 Verifies code parses and imports resolve after F1 / C / F4 changes.
 
 ```powershell
-python -c @'
+uv run python -c @'
 from pipeline.state import PipelineStage
 from pipeline.runner import PipelineHooks, build_default_hooks
 from pipeline.hooks.pg_functions import install
@@ -77,7 +91,7 @@ print("STATIC_OK")
 ## 2. DB connectivity
 
 ```powershell
-python -c @'
+uv run python -c @'
 from context.db import get_connection
 with get_connection() as conn:
     with conn.cursor() as cur:
@@ -97,7 +111,7 @@ print(f"CONNECTED db={db} user={user} version={ver[:40]}")
 No DB mutation. Proves hook wiring end-to-end.
 
 ```powershell
-python -m pipeline.runner --entity company --dry-run *>&1 |
+uv run python -m pipeline.runner --entity company --dry-run *>&1 |
     Tee-Object -FilePath artifacts\dryrun_company.log
 ```
 
@@ -111,7 +125,7 @@ followed by BRONZE_* stages in order (the last, BRONZE_EXPORT, SKIPPED for dry_r
 ```powershell
 foreach ($e in 'company', 'contact', 'opportunity', 'communication', 'case') {
     Write-Host "=== $e ===" -ForegroundColor Cyan
-    python -m pipeline.runner --entity $e --dry-run *>&1 |
+    uv run python -m pipeline.runner --entity $e --dry-run *>&1 |
         Select-String -Pattern 'SKIPPED|SUCCESS|FAILED' |
         Select-Object -First 8
 }
@@ -124,7 +138,7 @@ foreach ($e in 'company', 'contact', 'opportunity', 'communication', 'case') {
 Installs schema + 15 functions. Idempotent (CREATE OR REPLACE / IF NOT EXISTS).
 
 ```powershell
-python -c @'
+uv run python -c @'
 from pipeline.hooks.pg_functions import install
 result = install(dry_run=False)
 print(result)
@@ -156,7 +170,7 @@ WHERE schemaname = 'silver' AND tablename IN ('communication_hierarchy', 'compan
 Dumps current state of every staging table the pipeline cares about.
 
 ```powershell
-python scripts\probe_schemas.py --output artifacts\probe_pre_dbt.csv
+uv run python scripts\probe_schemas.py --output artifacts\probe_pre_dbt.csv
 ```
 
 **Success:** exit 0, message `Wrote artifacts\probe_pre_dbt.csv — N rows (X ok, Y not_found, 0 errors)`. Pre-dbt the `fct_communication_*` tables report `not_found` — **expected**, not a failure.
@@ -178,7 +192,7 @@ Import-Csv artifacts\probe_pre_dbt.csv |
 Populates `staging.stg_{entity}_normalised` via Python `SilverNormaliser`.
 
 ```powershell
-python -c @'
+uv run python -c @'
 from pipeline.silver import SilverNormaliser
 n = SilverNormaliser()
 n.normalise_company()
@@ -209,9 +223,9 @@ via `env_var` Jinja).
 ```powershell
 Set-Location dbt
 
-dbt deps                                              # installs dbt_utils (one-time)
-dbt build --select +fct_communication_notes           # smoke — one mart + upstream
-dbt build                                             # full graph — marts + tests
+uv run --extra dbt dbt deps                            # installs dbt_utils (one-time)
+uv run --extra dbt dbt build --select +fct_communication_notes   # smoke — one mart + upstream
+uv run --extra dbt dbt build                           # full graph — marts + tests
 
 Set-Location ..
 ```
@@ -220,7 +234,7 @@ Verify via artifacts:
 ```powershell
 Get-ChildItem dbt\target\run_results.json, dbt\target\manifest.json
 
-python -c @'
+uv run python -c @'
 import json
 rr = json.load(open("dbt/target/run_results.json"))
 ok   = sum(1 for r in rr["results"] if r["status"] in ("success", "pass"))
@@ -242,7 +256,7 @@ ORDER BY table_name;
 ## 8. Post-dbt schema probe + diff
 
 ```powershell
-python scripts\probe_schemas.py --output artifacts\probe_post_dbt.csv
+uv run python scripts\probe_schemas.py --output artifacts\probe_post_dbt.csv
 
 # Compare the two CSVs (SideIndicator column shows =>/<= for side of difference)
 Compare-Object `
@@ -267,7 +281,7 @@ Any other diff is a regression signal.
 Confirms render.py emits valid SQL for every entity, without executing.
 
 ```powershell
-python -c @'
+uv run python -c @'
 from sql.render import render_entity_upsert, render_engagement_upsert, render_association_bridge
 
 for entity in ("Company", "Person", "Opportunity"):
@@ -296,7 +310,7 @@ for ct in ("Calls", "Notes", "Tasks"):
 
 ```powershell
 foreach ($e in 'company', 'contact', 'opportunity', 'communication', 'case') {
-    python -m pipeline.runner --entity $e --dry-run --enable-post-gold *>&1 |
+    uv run python -m pipeline.runner --entity $e --dry-run --enable-post-gold *>&1 |
         Select-Object -Last 5
     Write-Host "---" -ForegroundColor DarkGray
 }
@@ -308,7 +322,7 @@ Get-ChildItem artifacts\pipeline_run_*.json |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1 |
     Get-Content |
-    python -m json.tool |
+    uv run python -m json.tool |
     Select-Object -First 60
 ```
 
@@ -322,10 +336,10 @@ Get-ChildItem artifacts\pipeline_run_*.json |
 
 ```powershell
 # Single entity, gold upsert only (stops before STACKSYNC)
-python -m pipeline.runner --entity company --approve-gold
+uv run python -m pipeline.runner --entity company --approve-gold
 
 # Single entity, full end-to-end including STACKSYNC + ASSOC_VALIDATE
-python -m pipeline.runner --entity communication --approve-gold --enable-post-gold
+uv run python -m pipeline.runner --entity communication --approve-gold --enable-post-gold
 ```
 
 **Success:** final line `Pipeline run SUCCESS. Artifact: pipeline_run_<entity>_<ts>.json`.

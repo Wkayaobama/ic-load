@@ -7,7 +7,7 @@ Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 $out = "artifacts/ops/03_pg_functions.csv"
 New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null
 
-python -c @'
+uv run python -c @'
 import csv, sys
 from pipeline.hooks.pg_functions import install
 from context.db import get_connection

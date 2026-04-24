@@ -9,17 +9,17 @@ New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null
 
 Push-Location dbt
 try {
-    dbt deps
+    uv run --extra dbt dbt deps
     if ($LASTEXITCODE -ne 0) { throw "dbt deps failed (exit $LASTEXITCODE)" }
 
-    dbt build
+    uv run --extra dbt dbt build
     $dbtExit = $LASTEXITCODE
 } finally {
     Pop-Location
 }
 
 # Parse run_results regardless of dbt exit — partial failures should still be visible.
-python -c @'
+uv run python -c @'
 import csv, json, sys, os
 path = "dbt/target/run_results.json"
 if not os.path.exists(path):

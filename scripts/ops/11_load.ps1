@@ -25,5 +25,5 @@ if ($Entity -notin $allowed) {
 }
 
 Write-Host "live upsert: entity=$Entity (runner --approve-gold)" -ForegroundColor Yellow
-python -m pipeline.runner --entity $Entity --approve-gold
+uv run python -m pipeline.runner --entity $Entity --approve-gold
 exit $LASTEXITCODE

@@ -20,10 +20,10 @@ $results = $entities | ForEach-Object -ThrottleLimit 5 -Parallel {
     $out = "artifacts/ops/10_full_dryrun_$e.csv"
     $log = "artifacts/ops/10_full_dryrun_$e.log"
 
-    python -m pipeline.runner --entity $e --dry-run --enable-post-gold *>$log
+    uv run python -m pipeline.runner --entity $e --dry-run --enable-post-gold *>$log
     $runnerExit = $LASTEXITCODE
 
-    python -c @"
+    uv run python -c @"
 import csv, json, sys, glob
 entity = '$e'
 files = sorted(glob.glob(f'artifacts/pipeline_run_{entity}_*.json'))
