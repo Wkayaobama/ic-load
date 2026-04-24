@@ -5,6 +5,15 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 
+# Cap BLAS threads for each subprocess: pandas eagerly spins a thread pool
+# on import, and 5 parallel `uv run python` invocations × N cores worth of
+# BLAS threads can exhaust RAM with the OpenBLAS "Memory allocation still
+# failed after 10 retries" error. Subprocesses inherit these env vars.
+$env:OPENBLAS_NUM_THREADS = "1"
+$env:MKL_NUM_THREADS      = "1"
+$env:OMP_NUM_THREADS      = "1"
+$env:NUMEXPR_NUM_THREADS  = "1"
+
 $entities = @('company', 'contact', 'opportunity', 'communication', 'case')
 $outDir   = "artifacts/ops"
 New-Item -Path $outDir -ItemType Directory -Force | Out-Null

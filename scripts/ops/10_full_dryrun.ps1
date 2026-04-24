@@ -4,6 +4,12 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $root
 
+# Cap BLAS threads per subprocess — see 04_dry_run.ps1 header for rationale.
+$env:OPENBLAS_NUM_THREADS = "1"
+$env:MKL_NUM_THREADS      = "1"
+$env:OMP_NUM_THREADS      = "1"
+$env:NUMEXPR_NUM_THREADS  = "1"
+
 $entities = @('company', 'contact', 'opportunity', 'communication', 'case')
 $outDir = "artifacts/ops"
 New-Item -Path $outDir -ItemType Directory -Force | Out-Null
