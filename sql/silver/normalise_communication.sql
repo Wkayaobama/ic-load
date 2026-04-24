@@ -20,7 +20,6 @@ SELECT
     "Comm_Type"                                              AS comm_type,
     "Comm_Status"                                            AS comm_status,
     "Comm_Priority"                                          AS comm_priority,
-    NULL                                                     AS comm_channel,
 
     -- Strip HTML from subject and note
     staging.fn_clean_html("Comm_Subject")                    AS comm_subject,

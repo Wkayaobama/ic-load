@@ -17,7 +17,6 @@ SELECT
     staging.fn_clean_utf8("Pers_LastName")                       AS lastname,
     "Pers_MiddleName"                                            AS pers_middlename,
     "Pers_Salutation"                                            AS salutation,
-    "Pers_Gender"                                                AS pers_gender,
     "Pers_Suffix"                                                AS pers_suffix,
 
     -- Title: strip HTML, truncate 150 chars
@@ -25,9 +24,7 @@ SELECT
 
     "Pers_Department"                                            AS icalps_department,
     staging.fn_map_contact_status("Pers_Status")                 AS icalps_contactstatus,
-    "Pers_Source"                                                AS pers_source,
     "Pers_Territory"                                             AS pers_territory,
-    "Pers_WebSite"                                               AS pers_website,
     "Pers_CreatedDate"                                           AS createdate,
     "Pers_UpdatedDate"                                           AS lastmodifieddate,
     "Pers_CreatedBy"                                             AS pers_createdby,

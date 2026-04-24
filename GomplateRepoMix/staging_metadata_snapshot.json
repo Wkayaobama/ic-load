@@ -79,7 +79,6 @@
         "comm_type",
         "comm_status",
         "comm_priority",
-        "comm_channel",
         "comm_subject",
         "comm_note",
         "comm_email",
