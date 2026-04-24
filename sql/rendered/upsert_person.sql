@@ -10,18 +10,18 @@
     mobilephone, city, state, country, zip, lastmodifieddate
 )
 SELECT
-    stg.pers_personid::text,
-    stg.icalps_email,
-    stg.pers_firstname,
-    stg.pers_lastname,
-    stg.icalps_title,
+    stg.icalps_contact_id::text,
+    stg.email,
+    stg.firstname,
+    stg.lastname,
+    stg.icalps_perstitle,
     stg.icalps_businessphone,
     stg.icalps_mobilephone,
-    stg.address_city,
-    stg.address_state,
-    stg.icalps_country,
-    stg.address_postcode,
-    stg.pers_updateddate::timestamp
+    stg.icalps_addresscity,
+    stg.state,
+    stg.icalps_address_country,
+    stg.zip,
+    stg.lastmodifieddate::timestamp
 FROM staging.stg_contact_normalised AS stg
 WHERE stg._load_status IN ('NEW', 'MODIFIED')
 ON CONFLICT (icalps_contact_id) DO UPDATE

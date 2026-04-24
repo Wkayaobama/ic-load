@@ -23,17 +23,17 @@ def render_entity_upsert(entity: str, schema: dict[str, Any] | None = None, run:
             zip, industry, phone, comp_type, comp_sector
         )
         SELECT
-            stg.comp_companyid::text,
-            stg.comp_name,
-            stg.comp_website,
-            stg.address_city,
-            stg.icalps_country,
-            stg.address_state,
-            stg.address_postcode,
-            stg.comp_sector,
+            stg.icalps_company_id::text,
+            stg.name,
+            stg.icalps_comp_website,
+            stg.city,
+            stg.icalps_address_country,
+            stg.icalps_company_state,
+            stg.icalps_address_postcode,
+            stg.icalps_industry_drill_down,
             stg.icalps_companyphone,
             stg.icalps_companytype,
-            stg.comp_sector
+            stg.icalps_industry_drill_down
         FROM {cfg['silver_table']} AS stg
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         ON CONFLICT ({cfg['upsert']['match_column']}) DO UPDATE
@@ -56,18 +56,18 @@ def render_entity_upsert(entity: str, schema: dict[str, Any] | None = None, run:
             mobilephone, city, state, country, zip, lastmodifieddate
         )
         SELECT
-            stg.pers_personid::text,
-            stg.icalps_email,
-            stg.pers_firstname,
-            stg.pers_lastname,
-            stg.icalps_title,
+            stg.icalps_contact_id::text,
+            stg.email,
+            stg.firstname,
+            stg.lastname,
+            stg.icalps_perstitle,
             stg.icalps_businessphone,
             stg.icalps_mobilephone,
-            stg.address_city,
-            stg.address_state,
-            stg.icalps_country,
-            stg.address_postcode,
-            stg.pers_updateddate::timestamp
+            stg.icalps_addresscity,
+            stg.state,
+            stg.icalps_address_country,
+            stg.zip,
+            stg.lastmodifieddate::timestamp
         FROM {cfg['silver_table']} AS stg
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         ON CONFLICT ({cfg['upsert']['match_column']}) DO UPDATE
@@ -85,26 +85,21 @@ def render_entity_upsert(entity: str, schema: dict[str, Any] | None = None, run:
             lastmodifieddate = EXCLUDED.lastmodifieddate;
         """
     elif entity == "Opportunity":
-        computed = cfg["upsert"]["computed_columns"]
         body = f"""
         INSERT INTO {cfg['gold_table']} (
             icalps_deal_id, dealname, pipeline, dealstage, amount,
-            icalps_dealforecast, icalps_dealcertainty, icalps_dealtype,
-            icalps_dealnotes, icalps_netamount_k__, icalps_net_weighted_amount, closedate
+            icalps_oppocertainty, icalps_dealtype, icalps_dealnotes, icalps_closedate
         )
         SELECT
-            stg.oppo_opportunityid::text,
-            stg.oppo_description,
-            stg.hubspot_pipeline_id,
-            stg.hubspot_dealstage_id,
-            stg.icalps_forecast::numeric,
-            stg.icalps_forecast::numeric,
-            stg.icalps_certainty::numeric,
-            stg.oppo_type,
-            stg.oppo_notes,
-            {computed['net_amount']},
-            {computed['net_weighted_amount']},
-            stg.icalps_closedate::timestamp
+            stg.icalps_deal_id::text,
+            stg.dealname,
+            stg.pipeline,
+            stg.dealstage,
+            stg.amount::numeric,
+            stg.icalps_oppocertainty::numeric,
+            stg.icalps_dealtype,
+            stg.icalps_dealnotes,
+            stg.icalps_closedate
         FROM {cfg['silver_table']} AS stg
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         ON CONFLICT ({cfg['upsert']['match_column']}) DO UPDATE
@@ -113,13 +108,10 @@ def render_entity_upsert(entity: str, schema: dict[str, Any] | None = None, run:
             pipeline = EXCLUDED.pipeline,
             dealstage = EXCLUDED.dealstage,
             amount = EXCLUDED.amount,
-            icalps_dealforecast = EXCLUDED.icalps_dealforecast,
-            icalps_dealcertainty = EXCLUDED.icalps_dealcertainty,
+            icalps_oppocertainty = EXCLUDED.icalps_oppocertainty,
             icalps_dealtype = EXCLUDED.icalps_dealtype,
             icalps_dealnotes = EXCLUDED.icalps_dealnotes,
-            icalps_netamount_k__ = EXCLUDED.icalps_netamount_k__,
-            icalps_net_weighted_amount = EXCLUDED.icalps_net_weighted_amount,
-            closedate = EXCLUDED.closedate;
+            icalps_closedate = EXCLUDED.icalps_closedate;
         """
     else:
         raise KeyError(f"Unsupported entity upsert rendering target: {entity}")

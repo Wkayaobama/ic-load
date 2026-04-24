@@ -5,8 +5,8 @@
 -- modules on every form submission.
 --
 -- Supports:
---   contact → company  (pers_companyid → icalps_company_id → companies.id)
---   deal → company     (oppo_primarycompanyid → icalps_company_id → companies.id)
+--   contact → company  (icalps_company_id → icalps_company_id → companies.id)
+--   deal → company     (icalps_company_id → icalps_company_id → companies.id)
 --   opportunity → company (same as deal, + seed_deal_stage_map JOIN for pipeline/stage)
 --
 -- IS DISTINCT FROM prevents writing unchanged rows — only real changes trigger
@@ -48,9 +48,9 @@ BEGIN
                 true                AS updated
             FROM staging.stg_contact_normalised c
             JOIN hubspot.contacts hsc
-                ON hsc.icalps_contact_id = c.pers_personid::text
+                ON hsc.icalps_contact_id = c.icalps_contact_id::text
             JOIN hubspot.companies hscomp
-                ON hscomp.icalps_company_id = c.pers_companyid::text
+                ON hscomp.icalps_company_id = c.icalps_company_id::text
             WHERE hsc.associatedcompanyid IS DISTINCT FROM hscomp.id::text;
         ELSE
             RETURN QUERY
@@ -59,8 +59,8 @@ BEGIN
                 SET    associatedcompanyid = hscomp.id::text
                 FROM   staging.stg_contact_normalised c
                 JOIN   hubspot.companies hscomp
-                    ON hscomp.icalps_company_id = c.pers_companyid::text
-                WHERE  hsc.icalps_contact_id = c.pers_personid::text
+                    ON hscomp.icalps_company_id = c.icalps_company_id::text
+                WHERE  hsc.icalps_contact_id = c.icalps_contact_id::text
                   AND  hsc.associatedcompanyid IS DISTINCT FROM hscomp.id::text
                 RETURNING hsc.id AS source_hs_id, hscomp.id AS target_hs_id, hscomp.name AS target_name
             )
@@ -82,9 +82,9 @@ BEGIN
                 true                AS updated
             FROM staging.stg_opportunity_normalised d
             JOIN hubspot.deals hsd
-                ON hsd.icalps_deal_id = d.oppo_opportunityid::text
+                ON hsd.icalps_deal_id = d.icalps_deal_id::text
             JOIN hubspot.companies hscomp
-                ON hscomp.icalps_company_id = d.oppo_primarycompanyid::text
+                ON hscomp.icalps_company_id = d.icalps_company_id::text
             WHERE hsd.associations_company IS DISTINCT FROM hscomp.id::text;
         ELSE
             RETURN QUERY
@@ -93,8 +93,8 @@ BEGIN
                 SET    associations_company = hscomp.id::text
                 FROM   staging.stg_opportunity_normalised d
                 JOIN   hubspot.companies hscomp
-                    ON hscomp.icalps_company_id = d.oppo_primarycompanyid::text
-                WHERE  hsd.icalps_deal_id = d.oppo_opportunityid::text
+                    ON hscomp.icalps_company_id = d.icalps_company_id::text
+                WHERE  hsd.icalps_deal_id = d.icalps_deal_id::text
                   AND  hsd.associations_company IS DISTINCT FROM hscomp.id::text
                 RETURNING hsd.id AS source_hs_id, hscomp.id AS target_hs_id, hscomp.name AS target_name
             )

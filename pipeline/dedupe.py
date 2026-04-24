@@ -37,20 +37,20 @@ SCORE_BANDS: dict[str, float] = {
 ENTITY_CONFIGS: dict[str, dict[str, Any]] = {
     "opportunity": {
         "table":     "staging.stg_opportunity_normalised",
-        "id_col":    "oppo_opportunityid",
-        "scope_col": "oppo_primarycompanyid",
+        "id_col":    "icalps_deal_id",
+        "scope_col": "icalps_company_id",
         "fields": [
-            {"name": "description",  "expr": "LOWER(COALESCE({t}.oppo_description, ''))", "weight": 0.6},
+            {"name": "description",  "expr": "LOWER(COALESCE({t}.dealname, ''))", "weight": 0.6},
             {"name": "company_name", "expr": "LOWER(COALESCE({t}.company_name, ''))",     "weight": 0.4},
         ],
     },
     "contact": {
         "table":     "staging.stg_contact_normalised",
-        "id_col":    "pers_personid",
-        "scope_col": "pers_companyid",
+        "id_col":    "icalps_contact_id",
+        "scope_col": "icalps_company_id",
         "fields": [
-            {"name": "full_name",    "expr": "LOWER(COALESCE({t}.pers_firstname,'') || ' ' || COALESCE({t}.pers_lastname,''))", "weight": 0.5},
-            {"name": "email",        "expr": "LOWER(COALESCE({t}.icalps_email, ''))",   "weight": 0.3},
+            {"name": "full_name",    "expr": "LOWER(COALESCE({t}.firstname,'') || ' ' || COALESCE({t}.lastname,''))", "weight": 0.5},
+            {"name": "email",        "expr": "LOWER(COALESCE({t}.email, ''))",   "weight": 0.3},
             {"name": "company_name", "expr": "LOWER(COALESCE({t}.company_name, ''))",   "weight": 0.2},
         ],
     },

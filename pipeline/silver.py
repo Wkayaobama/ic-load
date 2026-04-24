@@ -57,10 +57,11 @@ class SilverNormaliser:
 class SilverValidator:
     """Thin salvage wrapper around the proven legacy Silver validator."""
 
-    def __init__(self):
+    def __init__(self, entity: str | None = None):
         import importlib.util
         from types import ModuleType
 
+        self._entity = entity
         path = PROJECT_ROOT / "validate_silver.py"
         if not path.exists():
             raise RuntimeError(f"Legacy validator unavailable: {path}")
@@ -76,4 +77,4 @@ class SilverValidator:
         return self._delegate.results
 
     def run_checks(self) -> bool:
-        return self._delegate.run_checks()
+        return self._delegate.run_checks(self._entity)

@@ -275,7 +275,10 @@ def _run_silver(
 
 
 def _run_silver_validate(ctx: PipelineContext, owner_blocking: bool, verbosity: str, hooks: PipelineHooks) -> None:
-    validator = hooks.silver_validator_factory()
+    try:
+        validator = hooks.silver_validator_factory(ctx.entity)
+    except TypeError:
+        validator = hooks.silver_validator_factory()
     validator.run_checks()
 
     if verbosity == "high":

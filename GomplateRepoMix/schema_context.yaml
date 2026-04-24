@@ -70,10 +70,6 @@ entities:
       match_column: "icalps_deal_id"
       load_status_column: "_load_status"
       allowed_statuses: ["NEW", "MODIFIED"]
-      computed_columns:
-        weighted_forecast: "icalps_forecast::numeric * (icalps_certainty::numeric / 100.0)"
-        net_amount: "icalps_forecast::numeric - icalps_icalps_cost::numeric"
-        net_weighted_amount: "(icalps_forecast::numeric - icalps_icalps_cost::numeric) * (icalps_certainty::numeric / 100.0)"
 
   Communication:
     idempotency_prefix: "icalps_"

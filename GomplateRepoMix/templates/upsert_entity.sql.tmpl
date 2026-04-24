@@ -17,10 +17,10 @@ SET
     country = stg.icalps_country,
     state = stg.address_state,
     zip = stg.address_postcode,
-    industry = stg.comp_sector,
+    industry = stg.icalps_industry_drill_down,
     phone = stg.icalps_companyphone,
     comp_type = stg.icalps_companytype,
-    comp_sector = stg.comp_sector
+    comp_sector = stg.icalps_industry_drill_down
 FROM {{ $cfg.silver_table }} AS stg
 WHERE hs.{{ $cfg.upsert.match_column }} = stg.comp_companyid::text
   AND stg.{{ $cfg.upsert.load_status_column }} IN ('NEW', 'MODIFIED');

@@ -10,17 +10,17 @@
     zip, industry, phone, comp_type, comp_sector
 )
 SELECT
-    stg.comp_companyid::text,
-    stg.comp_name,
-    stg.comp_website,
-    stg.address_city,
-    stg.icalps_country,
-    stg.address_state,
-    stg.address_postcode,
-    stg.comp_sector,
+    stg.icalps_company_id::text,
+    stg.name,
+    stg.icalps_comp_website,
+    stg.city,
+    stg.icalps_address_country,
+    stg.icalps_company_state,
+    stg.icalps_address_postcode,
+    stg.icalps_industry_drill_down,
     stg.icalps_companyphone,
     stg.icalps_companytype,
-    stg.comp_sector
+    stg.icalps_industry_drill_down
 FROM staging.stg_company_normalised AS stg
 WHERE stg._load_status IN ('NEW', 'MODIFIED')
 ON CONFLICT (icalps_company_id) DO UPDATE

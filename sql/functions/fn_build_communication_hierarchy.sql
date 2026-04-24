@@ -13,8 +13,8 @@
 -- Column adaptation
 -- -----------------
 -- stg_communication_normalised has person_id but NOT person names.
--- This function JOINs against stg_contact_normalised for pers_firstname +
--- pers_lastname. This requires the contact entity to have been loaded
+-- This function JOINs against stg_contact_normalised for firstname +
+-- lastname. This requires the contact entity to have been loaded
 -- first (guaranteed by the import order: Company → Contact → Communication).
 --
 -- Node key stability
@@ -93,13 +93,13 @@ BEGIN
         INSERT INTO pg_temp._ch_nodes
         SELECT
             row_number() OVER (ORDER BY src.company_id),
-            COALESCE(comp.comp_name, 'Company #' || src.company_id::text),
+            COALESCE(comp.name, 'Company #' || src.company_id::text),
             NULL::bigint,
             0,
             src.company_id::text,
-            COALESCE(comp.comp_name, 'Company #' || src.company_id::text),
+            COALESCE(comp.name, 'Company #' || src.company_id::text),
             'company',
-            src.company_id,
+            src.company_id::bigint,
             NULL, NULL, NULL, NULL
         FROM (
             SELECT DISTINCT company_id
@@ -107,10 +107,10 @@ BEGIN
             WHERE company_id IS NOT NULL
         ) src
         LEFT JOIN staging.stg_company_normalised comp
-            ON comp.comp_companyid = src.company_id
+            ON comp.icalps_company_id::text = src.company_id::text
     $sql$, p_source_schema, p_source_table);
 
-    SELECT COALESCE(MAX(node_key), 0) INTO v_company_max FROM pg_temp._ch_nodes;
+    SELECT COALESCE(MAX(n.node_key), 0) INTO v_company_max FROM pg_temp._ch_nodes n;
 
 
     -- ── LEVEL 1 : Persons (scoped per company) ───────────────────────
@@ -122,18 +122,18 @@ BEGIN
         SELECT
             $1 + row_number() OVER (ORDER BY src.company_id, src.person_id),
             COALESCE(
-                NULLIF(trim(cont.pers_firstname || ' ' || cont.pers_lastname), ''),
+                NULLIF(trim(cont.firstname || ' ' || cont.lastname), ''),
                 'Person #' || src.person_id::text
             ),
             cn.node_key,
             1,
             cn.path_key || '|' || src.person_id::text,
             cn.path_label || '|' || COALESCE(
-                NULLIF(trim(cont.pers_firstname || ' ' || cont.pers_lastname), ''),
+                NULLIF(trim(cont.firstname || ' ' || cont.lastname), ''),
                 'Person #' || src.person_id::text
             ),
             'person',
-            src.person_id,
+            src.person_id::bigint,
             NULL, NULL, NULL, NULL
         FROM (
             SELECT DISTINCT company_id, person_id
@@ -142,14 +142,14 @@ BEGIN
               AND company_id IS NOT NULL
         ) src
         JOIN pg_temp._ch_nodes cn
-            ON  cn.entity_id = src.company_id
+            ON  cn.entity_id::text = src.company_id::text
             AND cn.node_type = 'company'
         LEFT JOIN staging.stg_contact_normalised cont
-            ON cont.pers_personid = src.person_id
+            ON cont.icalps_contact_id::text = src.person_id::text
     $sql$, p_source_schema, p_source_table)
     USING v_company_max;
 
-    SELECT COALESCE(MAX(node_key), 0) INTO v_person_max FROM pg_temp._ch_nodes;
+    SELECT COALESCE(MAX(n.node_key), 0) INTO v_person_max FROM pg_temp._ch_nodes n;
 
 
     -- ── LEVEL 2 : Communications ──────────────────────────────────────
@@ -198,11 +198,11 @@ BEGIN
         comm_id, comm_type, comm_action, comm_status
     )
     SELECT
-        node_key, node_name, parent_key, depth,
-        path_key, path_label, node_type, entity_id,
-        comm_id, comm_type, comm_action, comm_status
-    FROM pg_temp._ch_nodes
-    ORDER BY depth, node_key;
+        n.node_key, n.node_name, n.parent_key, n.depth,
+        n.path_key, n.path_label, n.node_type, n.entity_id,
+        n.comm_id, n.comm_type, n.comm_action, n.comm_status
+    FROM pg_temp._ch_nodes n
+    ORDER BY n.depth, n.node_key;
 
     RETURN QUERY
     SELECT n.node_key, n.node_name, n.parent_key, n.depth,

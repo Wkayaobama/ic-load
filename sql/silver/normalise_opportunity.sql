@@ -13,19 +13,19 @@ DROP TABLE IF EXISTS staging.stg_opportunity_normalised CASCADE;
 CREATE TABLE staging.stg_opportunity_normalised AS
 WITH ranked AS (
     SELECT
-        "Oppo_OpportunityId"                                        AS oppo_opportunityid,
-        "Oppo_Description"                                          AS oppo_description,
-        "Oppo_Type"                                                 AS oppo_type,
+        "Oppo_OpportunityId"                                        AS icalps_deal_id,
+        "Oppo_Description"                                          AS dealname,
+        "Oppo_Type"                                                 AS icalps_dealtype,
         NULL                                                        AS oppo_category,
-        "Oppo_Stage"                                                AS oppo_stage,
-        "Oppo_Status"                                               AS oppo_status,
-        "Oppo_AssignedUserId"                                       AS oppo_assigneduserid,
-        "Oppo_Note"                                                 AS oppo_notes,
+        "Oppo_Stage"                                                AS icalps_stage,
+        "Oppo_Status"                                               AS icalps_dealstatus,
+        "Oppo_AssignedUserId"                                       AS hubspot_owner_id,
+        "Oppo_Note"                                                 AS icalps_dealnotes,
         NULL                                                        AS oppo_deleted,
-        "Oppo_PrimaryCompanyId"                                     AS oppo_primarycompanyid,
-        "Oppo_PrimaryPersonId"                                      AS oppo_primarypersonid,
-        "Oppo_CreatedDate"                                          AS oppo_createddate,
-        "Oppo_UpdatedDate"                                          AS oppo_updateddate,
+        "Oppo_PrimaryCompanyId"                                     AS icalps_company_id,
+        "Oppo_PrimaryPersonId"                                      AS icalps_contact_id,
+        "Oppo_CreatedDate"                                          AS createdate,
+        "Oppo_UpdatedDate"                                          AS lastmodifieddate,
 
         -- Close date: strip time component
         CAST(
@@ -45,19 +45,19 @@ WITH ranked AS (
         AS date)                                                    AS icalps_opendate,
 
         -- Cost: strip currency symbols, normalise decimal
-        staging.fn_normalize_currency("Oppo_Cost"::text)            AS icalps_cost,
+        staging.fn_normalize_currency("Oppo_Cost"::text)            AS ic_alps_cost,
 
         -- Forecast and certainty (source is absolute €; divide by 1000 → k€ per schema contract)
-        CAST("Oppo_Forecast" AS double precision) / 1000.0          AS icalps_forecast,
-        CAST("Oppo_Certainty" AS double precision)                  AS icalps_certainty,
+        CAST("Oppo_Forecast" AS double precision) / 1000.0          AS amount,
+        CAST("Oppo_Certainty" AS double precision) / 100.0          AS icalps_oppocertainty,
 
         -- Computed columns
         CAST("Oppo_Forecast" AS double precision)
-            * CAST("Oppo_Certainty" AS double precision) / 100.0    AS cc_weighted,
+            * CAST("Oppo_Certainty" AS double precision) / 100.0    AS ccicalps_weightedamount,
 
         CAST("Oppo_Forecast" AS double precision)
             - COALESCE(staging.fn_normalize_currency("Oppo_Cost"::text)::double precision, 0.0)
-                                                                    AS cc_net,
+                                                                    AS ccicalps_netamount,
 
         -- HubSpot stage: derive name from pre-computed ID (extraction CASE, Apr 2026)
         CASE "HubSpot_Dealstage_ID"::text
@@ -71,8 +71,8 @@ WITH ranked AS (
             WHEN '1116652341' THEN 'On-Hold'
             ELSE NULL
         END                                                         AS hubspot_dealstage_name,
-        "HubSpot_Dealstage_ID"                                      AS hubspot_dealstage_id,
-        "HubSpot_Pipeline_ID"                                       AS hubspot_pipeline_id,
+        "HubSpot_Dealstage_ID"                                      AS dealstage,
+        "HubSpot_Pipeline_ID"                                       AS pipeline,
 
         -- Denormalised
         "Company_Name"                                              AS company_name,
@@ -98,30 +98,30 @@ WITH ranked AS (
     WHERE "Oppo_OpportunityId" IS NOT NULL
 )
 SELECT
-    oppo_opportunityid,
-    oppo_description,
-    oppo_type,
+    icalps_deal_id,
+    dealname,
+    icalps_dealtype,
     oppo_category,
-    oppo_stage,
-    oppo_status,
-    oppo_assigneduserid,
-    oppo_notes,
+    icalps_stage,
+    icalps_dealstatus,
+    hubspot_owner_id,
+    icalps_dealnotes,
     oppo_deleted,
-    oppo_primarycompanyid,
-    oppo_primarypersonid,
-    oppo_createddate,
-    oppo_updateddate,
+    icalps_company_id,
+    icalps_contact_id,
+    createdate,
+    lastmodifieddate,
     icalps_closedate,
     icalps_opendate,
-    icalps_cost,
-    icalps_forecast,
-    icalps_certainty,
-    cc_weighted,
-    cc_net,
-    cc_net * icalps_certainty / 100.0                               AS cc_net_weighted,
+    ic_alps_cost,
+    amount,
+    icalps_oppocertainty,
+    ccicalps_weightedamount,
+    ccicalps_netamount,
+    ccicalps_netamount * icalps_oppocertainty                       AS ccicalps_netweightedamount,
     hubspot_dealstage_name,
-    hubspot_dealstage_id,
-    hubspot_pipeline_id,
+    dealstage,
+    pipeline,
     company_name,
     company_language,
     person_firstname,

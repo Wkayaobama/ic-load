@@ -72,7 +72,7 @@ class CheckResult:
         }
 
     def __str__(self) -> str:
-        icon = "✓" if self.passed else ("✗" if self.severity == "STOP" else "!")
+        icon = "OK" if self.passed else ("X" if self.severity == "STOP" else "!")
         return f"  [{icon}] {self.severity:4}  {self.name}: {self.value}  ({self.threshold})"
 
 
@@ -119,7 +119,7 @@ class SilverValidator:
     # ------------------------------------------------------------------
 
     def check_company(self) -> None:
-        print("\n[validate] ── Company ──────────────────────────────────────")
+        print("\n[validate] -- Company --------------------------------------")
 
         # Row count
         n = int(self._scalar("SELECT COUNT(*) FROM staging.stg_company_normalised"))
@@ -142,7 +142,7 @@ class SilverValidator:
 
         # Address city fill rate
         city_fill = self._scalar("""
-            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE Address_City IS NOT NULL AND Address_City != '') / COUNT(*), 2)
+            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE city IS NOT NULL AND city != '') / COUNT(*), 2)
             FROM staging.stg_company_normalised
         """)
         self._add("company.city_fill_pct", "INFO", city_fill, ">50%", city_fill > 50)
@@ -153,7 +153,7 @@ class SilverValidator:
             FROM staging.stg_company_normalised
             WHERE icalps_country_raw IS NOT NULL
               AND icalps_country_raw != ''
-              AND icalps_country IS NULL
+              AND icalps_address_country IS NULL
             GROUP BY 1 ORDER BY 2 DESC LIMIT 20
         """)
         if not unmapped_countries.empty:
@@ -169,14 +169,14 @@ class SilverValidator:
     # ------------------------------------------------------------------
 
     def check_contact(self) -> None:
-        print("\n[validate] ── Contact ──────────────────────────────────────")
+        print("\n[validate] -- Contact --------------------------------------")
 
         n = int(self._scalar("SELECT COUNT(*) FROM staging.stg_contact_normalised"))
         self._add("contact.row_count", "INFO", n, ">0", n > 0)
 
         # Email void rate (critical — drives reconciliation)
         void_email = self._scalar("""
-            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE icalps_email IS NULL) / COUNT(*), 2)
+            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE email IS NULL) / COUNT(*), 2)
             FROM staging.stg_contact_normalised
         """)
         passed_email = void_email < 50
@@ -186,9 +186,9 @@ class SilverValidator:
         # Duplicate email check
         dup_emails = int(self._scalar("""
             SELECT COUNT(*) FROM (
-                SELECT icalps_email, COUNT(*) as n
+                SELECT email, COUNT(*) as n
                 FROM staging.stg_contact_normalised
-                WHERE icalps_email IS NOT NULL
+                WHERE email IS NOT NULL
                 GROUP BY 1 HAVING COUNT(*) > 1
             ) dups
         """))
@@ -204,7 +204,7 @@ class SilverValidator:
 
         # Status void rate
         void_status = self._scalar("""
-            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE icalps_pers_status IS NULL) / COUNT(*), 2)
+            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE icalps_contactstatus IS NULL) / COUNT(*), 2)
             FROM staging.stg_contact_normalised
         """)
         self._add("contact.status_void_pct", "WARN", void_status, "<10%", void_status < 10)
@@ -214,7 +214,7 @@ class SilverValidator:
     # ------------------------------------------------------------------
 
     def check_opportunity(self) -> None:
-        print("\n[validate] ── Opportunity ──────────────────────────────────")
+        print("\n[validate] -- Opportunity ----------------------------------")
 
         n = int(self._scalar("SELECT COUNT(*) FROM staging.stg_opportunity_normalised"))
         self._add("opportunity.row_count", "INFO", n, ">0", n > 0)
@@ -222,7 +222,7 @@ class SilverValidator:
         # Stage null rate for non-deleted deals (STOP if > 0)
         null_stage = int(self._scalar("""
             SELECT COUNT(*) FROM staging.stg_opportunity_normalised
-            WHERE oppo_status NOT IN (
+            WHERE icalps_dealstatus NOT IN (
                 'Perdue','Abandonne','NoGo','Lost','Closed Lost',
                 'Gagn\u00e9e','Won','Closed Won'
             )
@@ -235,7 +235,7 @@ class SilverValidator:
         # Duplicate Oppo_OpportunityId
         dup_ids = int(self._scalar("""
             SELECT COUNT(*) FROM (
-                SELECT Oppo_OpportunityId, COUNT(*) as n
+                SELECT icalps_deal_id, COUNT(*) as n
                 FROM staging.stg_opportunity_normalised
                 GROUP BY 1 HAVING COUNT(*) > 1
             ) dups
@@ -245,9 +245,9 @@ class SilverValidator:
 
         # Amount unit sanity: avg forecast > 50,000 suggests absolute euros not k€
         avg_forecast = self._scalar("""
-            SELECT AVG(icalps_forecast)
+            SELECT AVG(amount)
             FROM staging.stg_opportunity_normalised
-            WHERE icalps_forecast IS NOT NULL AND icalps_forecast > 0
+            WHERE amount IS NOT NULL AND amount > 0
         """)
         likely_absolute = avg_forecast > 50_000
         self._add("opportunity.avg_forecast", "STOP" if likely_absolute else "INFO",
@@ -258,7 +258,7 @@ class SilverValidator:
         # Close date null rate for Won/Lost deals
         null_close = int(self._scalar("""
             SELECT COUNT(*) FROM staging.stg_opportunity_normalised
-            WHERE Oppo_Status IN ('Gagnée','Perdue','Gagn\u00e9e','Won','Lost','Closed Won','Closed Lost')
+            WHERE icalps_dealstatus IN ('Gagnée','Perdue','Gagn\u00e9e','Won','Lost','Closed Won','Closed Lost')
               AND icalps_closedate IS NULL
         """))
         self._add("opportunity.null_closedate_won_lost", "WARN", null_close, "=0",
@@ -269,7 +269,7 @@ class SilverValidator:
     # ------------------------------------------------------------------
 
     def check_communication(self) -> None:
-        print("\n[validate] ── Communication ────────────────────────────────")
+        print("\n[validate] -- Communication --------------------------------")
 
         n = int(self._scalar("SELECT COUNT(*) FROM staging.stg_communication_normalised"))
         self._add("communication.row_count", "INFO", n, ">0", n > 0)
@@ -303,7 +303,7 @@ class SilverValidator:
     # ------------------------------------------------------------------
 
     def check_owner_resolution(self) -> None:
-        print("\n[validate] ── Owner Resolution ─────────────────────────────")
+        print("\n[validate] -- Owner Resolution -----------------------------")
 
         try:
             total = int(self._scalar("SELECT COUNT(DISTINCT icalps_ownerid_raw) FROM staging.stg_company_normalised WHERE icalps_ownerid_raw IS NOT NULL"))
@@ -323,14 +323,16 @@ class SilverValidator:
     # Reconciliation match rates (cross-check with Gold)
     # ------------------------------------------------------------------
 
-    def check_reconciliation_rates(self) -> None:
-        print("\n[validate] ── Reconciliation Rates ────────────────────────")
+    def check_reconciliation_rates(self, entities: set[str] | None = None) -> None:
+        print("\n[validate] -- Reconciliation Rates -------------------------")
 
         for entity, staging_table, pk_col, hs_table, hs_key in [
-            ("company",  "staging.stg_company_normalised",     "Comp_CompanyId",      "hubspot.companies", "icalps_company_id"),
-            ("contact",  "staging.stg_contact_normalised",     "Pers_PersonId",       "hubspot.contacts",  "icalps_contact_id"),
-            ("deal",     "staging.stg_opportunity_normalised", "Oppo_OpportunityId",  "hubspot.deals",     "icalps_deal_id"),
+            ("company",  "staging.stg_company_normalised",     "icalps_company_id",   "hubspot.companies", "icalps_company_id"),
+            ("contact",  "staging.stg_contact_normalised",     "icalps_contact_id",   "hubspot.contacts",  "icalps_contact_id"),
+            ("deal",     "staging.stg_opportunity_normalised", "icalps_deal_id",      "hubspot.deals",     "icalps_deal_id"),
         ]:
+            if entities is not None and entity not in entities:
+                continue
             try:
                 row = self._q(f"""
                     SELECT
@@ -355,7 +357,7 @@ class SilverValidator:
     # run_checks
     # ------------------------------------------------------------------
 
-    def run_checks(self) -> bool:
+    def run_checks(self, entity: str | None = None) -> bool:
         """
         Execute all checks. Returns True if no STOP-severity failures.
 
@@ -365,12 +367,29 @@ class SilverValidator:
         print("  Silver Layer Validation")
         print("=" * 62)
 
-        self.check_company()
-        self.check_contact()
-        self.check_opportunity()
-        self.check_communication()
-        self.check_owner_resolution()
-        self.check_reconciliation_rates()
+        entity_key = entity.lower() if entity else None
+
+        if entity_key is None:
+            self.check_company()
+            self.check_contact()
+            self.check_opportunity()
+            self.check_communication()
+            self.check_owner_resolution()
+            self.check_reconciliation_rates()
+        elif entity_key == "company":
+            self.check_company()
+            self.check_owner_resolution()
+            self.check_reconciliation_rates({"company"})
+        elif entity_key == "contact":
+            self.check_contact()
+            self.check_reconciliation_rates({"contact"})
+        elif entity_key == "opportunity":
+            self.check_opportunity()
+            self.check_reconciliation_rates({"deal"})
+        elif entity_key == "communication":
+            self.check_communication()
+        else:
+            raise ValueError(f"Unknown entity for silver validation: {entity}")
 
         # Summary
         stops  = [r for r in self.results if r.severity == "STOP"  and not r.passed]
