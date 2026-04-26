@@ -15,16 +15,13 @@ SELECT
     "Pers_CompanyId"                                             AS icalps_company_id,
     staging.fn_clean_utf8("Pers_FirstName")                      AS firstname,
     staging.fn_clean_utf8("Pers_LastName")                       AS lastname,
-    "Pers_MiddleName"                                            AS pers_middlename,
     "Pers_Salutation"                                            AS salutation,
-    "Pers_Suffix"                                                AS pers_suffix,
 
     -- Title: strip HTML, truncate 150 chars
     LEFT(staging.fn_clean_html("Pers_Title"), 150)               AS icalps_perstitle,
 
     "Pers_Department"                                            AS icalps_department,
     staging.fn_map_contact_status("Pers_Status")                 AS icalps_contactstatus,
-    "Pers_Territory"                                             AS pers_territory,
     "Pers_CreatedDate"                                           AS createdate,
     "Pers_UpdatedDate"                                           AS lastmodifieddate,
     "Pers_CreatedBy"                                             AS pers_createdby,

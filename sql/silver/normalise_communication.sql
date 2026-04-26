@@ -17,7 +17,9 @@ CREATE TABLE staging.stg_communication_normalised AS
 SELECT
     "Comm_CommunicationId"                                   AS comm_communicationid,
     "Comm_Action"                                            AS comm_action,
-    "Comm_Type"                                              AS comm_type,
+    CASE WHEN "Comm_Type" = 'email' THEN 'Email'
+         ELSE "Comm_Type"
+    END                                                      AS comm_type,
     "Comm_Status"                                            AS comm_status,
     "Comm_Priority"                                          AS comm_priority,
 
@@ -25,7 +27,7 @@ SELECT
     staging.fn_clean_html("Comm_Subject")                    AS comm_subject,
     staging.fn_clean_html("Comm_Note")                       AS comm_note,
 
-    "Comm_Email"                                             AS comm_email,
+    staging.fn_clean_html("Comm_Email")                      AS comm_email,
 
     -- Timestamps (UTC conversion is a Gold-layer concern)
     "Comm_DateTime"                                          AS comm_datetime,
