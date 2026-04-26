@@ -29,7 +29,7 @@ ranked AS (
         "Oppo_Status"                                               AS icalps_dealstatus,
         "Oppo_AssignedUserId"                                       AS hubspot_owner_id,
         staging.fn_clean_html("Oppo_Note")                          AS icalps_dealnotes,
-        NULL                                                        AS oppo_deleted,
+        "Oppo_Deleted"::boolean                                     AS oppo_deleted,
         "Oppo_PrimaryCompanyId"                                     AS icalps_company_id,
         "Oppo_PrimaryPersonId"                                      AS icalps_contact_id,
         "Oppo_CreatedDate"                                          AS createdate,

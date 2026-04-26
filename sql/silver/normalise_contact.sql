@@ -57,7 +57,14 @@ SELECT
     staging.fn_map_country_iso("Address_Country")                AS icalps_address_country,
 
     -- LinkedIn
-    staging.fn_validate_linkedin_url("LinkedIn_URL")             AS linkedin_url,
+    staging.fn_validate_linkedin_url(
+        CASE WHEN "LinkedIn_URL" ~ '^in/'
+             THEN 'https://www.linkedin.com/' || "LinkedIn_URL"
+             ELSE "LinkedIn_URL"
+        END
+    )                                                            AS linkedin_url,
+
+    "Pers_Deleted"::boolean                                        AS pers_deleted,
 
     -- Load-status watermark — carried through unchanged
     _load_status,
