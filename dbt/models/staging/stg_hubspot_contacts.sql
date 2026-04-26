@@ -3,7 +3,7 @@
 
 select
     id as hubspot_contact_id,
-    cast(icalps_contact_id as integer) as legacy_contact_id,
+    cast(icalps_contact_id as bigint) as legacy_contact_id,
     stacksync_record_id_nd85zc as hubspot_contact_record_id,
     firstname as contact_firstname,
     lastname as contact_lastname,

@@ -30,26 +30,26 @@ with sibling_companies as (
         hs.id                          as hubspot_company_id,
         hs.icalps_company_id           as legacy_company_id,
         hs.icalps_sibling_index
-    from hubspot.companies hs
+    from pg_hubspot.hubspot.companies hs
     where hs.icalps_sibling_index > 0
       and hs.icalps_company_id is not null
 ),
 
 contacts_pointing_to_sibling as (
-    -- Silver contacts whose pers_companyid resolves to a child company
+    -- Silver contacts whose icalps_company_id resolves to a child company
     select
-        c.pers_personid                as legacy_contact_id,
-        c.pers_companyid               as legacy_company_id,
+        c.icalps_contact_id            as legacy_contact_id,
+        c.icalps_company_id            as legacy_company_id,
         sc.hubspot_company_id,
         hsc.id                         as hubspot_contact_id,
         hsc.associatedcompanyid        as associated_company_id
-    from staging.stg_contact_normalised c
+    from pg_hubspot.staging.stg_contact_normalised c
     inner join sibling_companies sc
-        on c.pers_companyid::bigint = sc.legacy_company_id
-    left join hubspot.contacts hsc
-        on hsc.icalps_contact_id = c.pers_personid::text
-    where c.pers_companyid is not null
-      and c.pers_personid  is not null
+        on c.icalps_company_id::bigint = sc.legacy_company_id
+    left join pg_hubspot.hubspot.contacts hsc
+        on hsc.icalps_contact_id = c.icalps_contact_id::text
+    where c.icalps_company_id is not null
+      and c.icalps_contact_id is not null
 )
 
 -- Return rows only for contacts whose HubSpot association is MISSING

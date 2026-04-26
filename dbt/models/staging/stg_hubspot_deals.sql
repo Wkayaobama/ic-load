@@ -3,7 +3,7 @@
 
 select
     id as hubspot_deal_id,
-    cast(icalps_deal_id as integer) as legacy_deal_id,
+    cast(icalps_deal_id as bigint) as legacy_deal_id,
     stacksync_record_id_87b7vd as hubspot_deal_record_id,
     dealname as deal_name
 from {{ source('hubspot', 'deals') }}

@@ -32,16 +32,16 @@ from context.db import get_connection, is_postgres_configured, postgres_config  
 
 PROBE_TARGETS: list[tuple[str, str, str | None]] = [
     # (schema, table, primary_key_column_or_None)
-    ("staging", "stg_company_normalised",       "comp_companyid"),
-    ("staging", "stg_contact_normalised",       "pers_personid"),
-    ("staging", "stg_opportunity_normalised",   "oppo_opportunityid"),
+    ("staging", "stg_company_normalised",       "icalps_company_id"),
+    ("staging", "stg_contact_normalised",       "icalps_contact_id"),
+    ("staging", "stg_opportunity_normalised",   "icalps_deal_id"),
     ("staging", "stg_communication_normalised", "comm_communicationid"),
     ("staging", "stg_case_v2",                  "icalps_ticket_id"),
     ("staging", "fct_communication_calls",      "icalps_communication_id"),
     ("staging", "fct_communication_notes",      "icalps_communication_id"),
     ("staging", "fct_communication_tasks",      "icalps_communication_id"),
     ("staging", "fct_communication_meetings",   "icalps_communication_id"),
-    ("staging", "fct_communication_bridge",     "icalps_communication_id"),
+    ("staging", "fct_communication_bridge",     None),  # aggregate table, no single PK
     ("staging", "fct_communication_email_meetings", "icalps_communication_id"),
     ("staging", "fct_communication_rank",       None),
     ("staging", "fct_custom_object_tasks",      None),

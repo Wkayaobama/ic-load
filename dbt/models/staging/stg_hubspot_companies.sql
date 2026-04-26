@@ -3,7 +3,7 @@
 
 select
     id as hubspot_company_id,
-    cast(icalps_company_id as integer) as legacy_company_id,
+    cast(icalps_company_id as bigint) as legacy_company_id,
     stacksync_record_id_9vpp8v as hubspot_company_record_id,
     name as company_name,
     domain as company_domain,

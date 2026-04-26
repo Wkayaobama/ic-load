@@ -1,4 +1,5 @@
-# 06_silver — run SilverNormaliser.normalise_<entity> in PARALLEL.
+# 06_silver — VALIDATE normalised tables exist with data (legacy normaliser disabled).
+# Silver normalization is done externally; this step validates stg_*_normalised tables.
 # Emits artifacts/ops/06_silver_<entity>.csv: table,row_count,distinct_pk,null_pk
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path "$PSScriptRoot\..\.."
@@ -17,9 +18,9 @@ New-Item -Path $outDir -ItemType Directory -Force | Out-Null
 # entity → (normalised table, primary key column) — matches
 # load_entity_translation_contract() in context/config.py
 $meta = @{
-    'company'       = @{ table = 'staging.stg_company_normalised';       pk = 'comp_companyid'       }
-    'contact'       = @{ table = 'staging.stg_contact_normalised';       pk = 'pers_personid'        }
-    'opportunity'   = @{ table = 'staging.stg_opportunity_normalised';   pk = 'oppo_opportunityid'   }
+    'company'       = @{ table = 'staging.stg_company_normalised';       pk = 'icalps_company_id'    }
+    'contact'       = @{ table = 'staging.stg_contact_normalised';       pk = 'icalps_contact_id'    }
+    'opportunity'   = @{ table = 'staging.stg_opportunity_normalised';   pk = 'icalps_deal_id'       }
     'communication' = @{ table = 'staging.stg_communication_normalised'; pk = 'comm_communicationid' }
 }
 
@@ -36,14 +37,11 @@ $results = $entities | ForEach-Object -ThrottleLimit 4 -Parallel {
     $pk    = ($using:meta)[$e].pk
     $out   = "artifacts/ops/06_silver_$e.csv"
 
+    # NOTE: Silver normalization already done externally. This step validates tables exist.
+    # Legacy SilverNormaliser has schema mismatch with current stg_* tables.
     uv run python -c @"
 import csv, sys
-from pipeline.silver import SilverNormaliser
 from context.db import get_connection
-
-normaliser = SilverNormaliser()
-method = 'normalise_' + '$e'
-getattr(normaliser, method)()
 
 schema, table = '$table'.split('.')
 pk = '$pk'
@@ -51,12 +49,16 @@ with get_connection() as conn:
     with conn.cursor() as cur:
         cur.execute(f'SELECT COUNT(*) FROM {schema}.{table}')
         rc = cur.fetchone()[0]
+        if rc == 0:
+            print(f'ERROR: {schema}.{table} has 0 rows', file=sys.stderr)
+            sys.exit(1)
         cur.execute(f'SELECT COUNT(DISTINCT {pk}), COUNT(*) FILTER (WHERE {pk} IS NULL) FROM {schema}.{table}')
         distinct_pk, null_pk = cur.fetchone()
 
 w = csv.writer(sys.stdout)
 w.writerow(['table','row_count','distinct_pk','null_pk'])
 w.writerow([f'{schema}.{table}', rc, distinct_pk, null_pk])
+print(f'[06_silver] validated {schema}.{table}: {rc:,} rows, {distinct_pk:,} distinct PKs', file=sys.stderr)
 "@ > $out
     $pyExit = $LASTEXITCODE
 

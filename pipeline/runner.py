@@ -205,8 +205,11 @@ def run(
 
 
 def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: PipelineHooks) -> None:
-    if dry_run:
-        transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.SKIPPED, reason="dry_run")
+    # Skip in dry_run or preview mode: DDL is unnecessary (03_pg_functions.ps1 already ran),
+    # and parallel execution causes "tuple concurrently updated" conflicts.
+    if dry_run or ctx.metadata.get("preview"):
+        skip_reason = "dry_run" if dry_run else "preview"
+        transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.SKIPPED, reason=skip_reason)
         return
     try:
         result = hooks.pg_functions_installer(dry_run)
@@ -229,13 +232,12 @@ def _run_bronze(
     hooks: PipelineHooks,
     bronze_csv_override: str | None,
 ) -> None:
-    # Dry-run contract: touch nothing. Skip all four BRONZE_* stages as a
+    # Dry-run/preview contract: touch nothing. Skip all four BRONZE_* stages as a
     # block so a fresh clone without bronze_layer co-located can still
     # validate the stage wiring end-to-end without a CSV lookup or DuckDB
-    # load. Previously _run_bronze called latest_bronze_path() first and
-    # transitioned to FAILED when it returned None, which killed the
-    # pipeline regardless of the dry_run flag.
-    if dry_run:
+    # load. Preview mode assumes bronze data already loaded by earlier ops stages.
+    if dry_run or ctx.metadata.get("preview"):
+        skip_reason = "dry_run" if dry_run else "preview"
         for stage in (
             PipelineStage.BRONZE_LOAD,
             PipelineStage.BRONZE_METADATA,
@@ -243,7 +245,7 @@ def _run_bronze(
             PipelineStage.BRONZE_EXPORT,
         ):
             if _should_run(ctx, stage, resume_stage):
-                transition(ctx, stage, StageStatus.SKIPPED, reason="dry_run")
+                transition(ctx, stage, StageStatus.SKIPPED, reason=skip_reason)
         return
 
     loader = hooks.bronze_loader_factory()
@@ -297,8 +299,10 @@ def _run_silver(
     hooks: PipelineHooks,
 ) -> None:
     if _should_run(ctx, PipelineStage.SILVER_NORMALISE, None):
-        if dry_run:
-            transition(ctx, PipelineStage.SILVER_NORMALISE, StageStatus.SKIPPED, reason="dry_run")
+        # Skip in dry_run or preview mode: normalised tables already exist (validated by 06_silver.ps1)
+        if dry_run or ctx.metadata.get("preview"):
+            skip_reason = "dry_run" if dry_run else "preview"
+            transition(ctx, PipelineStage.SILVER_NORMALISE, StageStatus.SKIPPED, reason=skip_reason)
         else:
             try:
                 normaliser = hooks.silver_normaliser_factory()
@@ -368,8 +372,10 @@ def _run_silver_validate(ctx: PipelineContext, owner_blocking: bool, verbosity: 
 def _run_dbt(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.DBT_BUILD, None):
         return
-    if dry_run:
-        transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SKIPPED, reason="dry_run")
+    # Skip in dry_run or preview mode: dbt already ran in 07_dbt.ps1
+    if dry_run or ctx.metadata.get("preview"):
+        skip_reason = "dry_run" if dry_run else "preview"
+        transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SKIPPED, reason=skip_reason)
         return
     ok = hooks.dbt_runner(entity, dry_run)
     if not ok:
@@ -510,10 +516,11 @@ def _run_gold_validate(
 def _run_stacksync_sync(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.STACKSYNC_SYNC, None):
         return
-    if dry_run:
-        # StackSyncCheckpoint.wait hits the DB to verify mirror freshness.
-        # Skip in dry-run — we're validating wiring, not mirror state.
-        transition(ctx, PipelineStage.STACKSYNC_SYNC, StageStatus.SKIPPED, reason="dry_run")
+    # Skip in dry_run or preview mode: StackSync sync checkpoint hits DB to verify
+    # mirror freshness. Skip in preview — we're testing SELECT paths, not sync state.
+    if dry_run or ctx.metadata.get("preview"):
+        skip_reason = "dry_run" if dry_run else "preview"
+        transition(ctx, PipelineStage.STACKSYNC_SYNC, StageStatus.SKIPPED, reason=skip_reason)
         return
     try:
         result = hooks.sync_waiter(entity, dry_run)

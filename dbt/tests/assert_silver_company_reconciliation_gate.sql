@@ -19,12 +19,12 @@
 with rate as (
     select
         count(*) as total_with_company_fk,
-        count(*) filter (where has_company_match) as matched,
+        count(*) filter (where hubspot_company_id is not null) as matched,
         round(
-            100.0 * count(*) filter (where has_company_match) / nullif(count(*), 0),
+            100.0 * count(*) filter (where hubspot_company_id is not null) / nullif(count(*), 0),
             1
         ) as match_pct
-    from staging.int_communication_reconciled
+    from pg_hubspot.staging.communications_reconciliation
     where legacy_company_id is not null
 )
 

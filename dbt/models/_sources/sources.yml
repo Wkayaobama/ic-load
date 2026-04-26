@@ -36,6 +36,7 @@ sources:
 
   - name: staging
     description: "Silver-normalised staging tables in PostgreSQL (output of silver_normalise.py)"
+    database: pg_hubspot
     schema: staging
     tables:
       - name: stg_company_normalised
@@ -129,6 +130,7 @@ sources:
 
   - name: silver
     description: "Silver-layer tables loaded by standalone Python scripts (not dbt)"
+    database: pg_hubspot
     schema: silver
     tables:
       - name: custom_object_tasks

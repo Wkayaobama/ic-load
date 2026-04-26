@@ -38,8 +38,9 @@ dependencies = [
 # Stage 07 (dbt_build) only. Excluded from the core deps because dbt-core
 # pulls ~20 transitive packages and its pin surface conflicts with pandas.
 # Invoke via: `uv run --extra dbt dbt build ...`
+# Uses dbt-duckdb with postgres_scanner extension for hybrid DuckDB+Postgres.
 dbt = [
-    "dbt-postgres>=1.7",
+    "dbt-duckdb>=1.7",
 ]
 
 # For repo-local tests and type checks.

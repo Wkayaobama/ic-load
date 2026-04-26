@@ -38,25 +38,25 @@ with sibling_companies as (
         hs.id                          as hubspot_company_id,
         hs.icalps_company_id           as legacy_company_id,
         hs.icalps_sibling_index
-    from hubspot.companies hs
+    from pg_hubspot.hubspot.companies hs
     where hs.icalps_sibling_index > 0
       and hs.icalps_company_id is not null
 ),
 
 deals_pointing_to_sibling as (
-    -- Silver opportunities whose oppo_primarycompanyid resolves to a child company
+    -- Silver opportunities whose icalps_company_id resolves to a child company
     select
-        d.oppo_opportunityid           as legacy_deal_id,
-        d.oppo_primarycompanyid        as legacy_company_id,
+        d.icalps_deal_id               as legacy_deal_id,
+        d.icalps_company_id            as legacy_company_id,
         sc.hubspot_company_id,
         hsd.id                         as hubspot_deal_id
-    from staging.stg_opportunity_normalised d
+    from pg_hubspot.staging.stg_opportunity_normalised d
     inner join sibling_companies sc
-        on d.oppo_primarycompanyid::bigint = sc.legacy_company_id
-    left join hubspot.deals hsd
-        on hsd.icalps_deal_id = d.oppo_opportunityid::text
-    where d.oppo_primarycompanyid is not null
-      and d.oppo_opportunityid    is not null
+        on d.icalps_company_id::bigint = sc.legacy_company_id
+    left join pg_hubspot.hubspot.deals hsd
+        on hsd.icalps_deal_id = d.icalps_deal_id::text
+    where d.icalps_company_id is not null
+      and d.icalps_deal_id    is not null
 )
 
 -- Return rows only for deals whose HubSpot mirror or association is MISSING.

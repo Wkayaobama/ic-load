@@ -45,7 +45,8 @@ $results = $entities | ForEach-Object -ThrottleLimit 5 -Parallel {
     # --preview skips --approve-gold gate (SELECT only) and the dbt stage is
     # re-run as dry-run to avoid double-execution. --enable-post-gold ensures
     # the assoc_preview path fires for communication.
-    uv run python -m pipeline.runner --entity $e --preview --enable-post-gold *>$log
+    # --skip-validation bypasses STOP-level silver checks since 07_dbt passed.
+    uv run python -m pipeline.runner --entity $e --preview --enable-post-gold --skip-validation *>$log
     $runnerExit = $LASTEXITCODE
 
     # Count CSVs produced for this entity
