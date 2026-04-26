@@ -19,12 +19,16 @@ SELECT
     "Comp_CreatedDate"                                       AS createdate,
     "Comp_UpdatedDate"                                       AS lastmodifieddate,
     "Comp_Source"                                            AS icalps_compsource,
-    "Comp_CurrencyId"                                        AS comp_currencyid,
+
 
     -- Enum mappings via UDFs
     staging.fn_map_company_status("Comp_Status")             AS icalps_companystatus,
     staging.fn_map_company_type("Comp_Type")                 AS icalps_companytype,
-    staging.fn_map_language_iso("Comp_Language")             AS icalps_comp_language,
+    CASE "Comp_Language"::text
+        WHEN '0' THEN 'FR'
+        WHEN '1' THEN 'INTER'
+        ELSE NULL
+    END                                                      AS icalps_comp_language,
 
     -- Address
     "Address_Street1"                                        AS icalps_companyaddress,
@@ -46,12 +50,17 @@ SELECT
     -- Contact info
     "Company_Email"                                          AS icalps_companyemail,
     staging.fn_normalize_phone_e164("Company_Phone", 'FR')   AS icalps_companyphone,
-    staging.fn_validate_linkedin_url("LinkedIn_URL")         AS linkedin_company_page,
+    staging.fn_validate_linkedin_url(
+        CASE WHEN "LinkedIn_URL" ~ '^company/'
+             THEN 'https://www.linkedin.com/' || "LinkedIn_URL"
+             ELSE "LinkedIn_URL"
+        END
+    )                                                        AS linkedin_company_page,
 
     -- Owner (resolved in a separate owner resolution step)
     COALESCE("Owner_Email", 'thierry.villard@icalps.com')    AS icalps_ownerid_raw,
-    "Owner_FirstName"                                        AS owner_firstname,
-    "Owner_LastName"                                         AS owner_lastname,
+    COALESCE("Owner_FirstName", 'Thierry')                   AS owner_firstname,
+    COALESCE("Owner_LastName", 'VILLARD')                    AS owner_lastname,
 
     -- Load-status watermark — carried through unchanged
     _load_status,

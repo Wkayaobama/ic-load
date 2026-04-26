@@ -39,6 +39,16 @@ AS $$
         WHEN trim(raw) = 'Chine'              THEN 'CN'
         WHEN trim(raw) = 'Israel'             THEN 'IL'
         WHEN trim(raw) = 'Singapour'          THEN 'SG'
+        -- Uppercase / alternate variants found in probe data (Apr 2026)
+        WHEN trim(raw) = 'FRANCE'             THEN 'FR'
+        WHEN trim(raw) = 'TAIWAN'             THEN 'TW'
+        WHEN trim(raw) = 'PAYSBAS'            THEN 'NL'
+        WHEN trim(raw) = 'ISRAEL'             THEN 'IL'
+        WHEN trim(raw) = 'ANGLETERRE'         THEN 'GB'
+        WHEN trim(raw) = 'UK'                 THEN 'GB'
+        WHEN trim(raw) = 'United Kingdom'     THEN 'GB'
+        WHEN trim(raw) = 'allemagne'          THEN 'DE'
+        WHEN trim(raw) = 'france'             THEN 'FR'
         ELSE raw  -- pass-through (already ISO or unmapped)
     END
 $$;
