@@ -13,6 +13,10 @@
 -- first install; IF NOT EXISTS makes subsequent runs by the pipeline role safe.
 CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
 
+-- Required by staging.fn_clean_html (BeautifulSoup HTML stripping).
+-- Already installed on the DB (Apr 2026). IF NOT EXISTS makes this a no-op.
+CREATE EXTENSION IF NOT EXISTS plpython3u;
+
 CREATE SCHEMA IF NOT EXISTS silver;
 
 

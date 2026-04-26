@@ -49,7 +49,7 @@ SELECT
     staging.fn_validate_linkedin_url("LinkedIn_URL")         AS linkedin_company_page,
 
     -- Owner (resolved in a separate owner resolution step)
-    "Owner_Email"                                            AS icalps_ownerid_raw,
+    COALESCE("Owner_Email", 'thierry.villard@icalps.com')    AS icalps_ownerid_raw,
     "Owner_FirstName"                                        AS owner_firstname,
     "Owner_LastName"                                         AS owner_lastname,
 

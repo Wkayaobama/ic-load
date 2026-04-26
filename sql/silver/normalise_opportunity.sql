@@ -11,16 +11,24 @@
 DROP TABLE IF EXISTS staging.stg_opportunity_normalised CASCADE;
 
 CREATE TABLE staging.stg_opportunity_normalised AS
-WITH ranked AS (
+WITH pre_norm AS (
+    SELECT *,
+        GREATEST(CAST("Oppo_Forecast" AS double precision), 0.0) AS _forecast_clamped
+    FROM staging.stg_opportunity
+),
+ranked AS (
     SELECT
         "Oppo_OpportunityId"                                        AS icalps_deal_id,
         "Oppo_Description"                                          AS dealname,
-        "Oppo_Type"                                                 AS icalps_dealtype,
+        CASE WHEN LOWER("Oppo_Type") = 'design service' THEN 'design'
+             WHEN "Oppo_Type" = 'Desogn_Service' THEN 'Design_Service'
+             ELSE "Oppo_Type"
+        END                                                         AS icalps_dealtype,
         NULL                                                        AS oppo_category,
         "Oppo_Stage"                                                AS icalps_stage,
         "Oppo_Status"                                               AS icalps_dealstatus,
         "Oppo_AssignedUserId"                                       AS hubspot_owner_id,
-        "Oppo_Note"                                                 AS icalps_dealnotes,
+        staging.fn_clean_html("Oppo_Note")                          AS icalps_dealnotes,
         NULL                                                        AS oppo_deleted,
         "Oppo_PrimaryCompanyId"                                     AS icalps_company_id,
         "Oppo_PrimaryPersonId"                                      AS icalps_contact_id,
@@ -47,17 +55,9 @@ WITH ranked AS (
         -- Cost: strip currency symbols, normalise decimal
         staging.fn_normalize_currency("Oppo_Cost"::text)            AS ic_alps_cost,
 
-        -- Forecast and certainty (source is absolute €; divide by 1000 → k€ per schema contract)
-        CAST("Oppo_Forecast" AS double precision) / 1000.0          AS amount,
+        -- Forecast clamped to 0 for negatives; divide by 1000 → k€ per schema contract
+        _forecast_clamped / 1000.0                                  AS amount,
         CAST("Oppo_Certainty" AS double precision) / 100.0          AS icalps_oppocertainty,
-
-        -- Computed columns
-        CAST("Oppo_Forecast" AS double precision)
-            * CAST("Oppo_Certainty" AS double precision) / 100.0    AS ccicalps_weightedamount,
-
-        CAST("Oppo_Forecast" AS double precision)
-            - COALESCE(staging.fn_normalize_currency("Oppo_Cost"::text)::double precision, 0.0)
-                                                                    AS ccicalps_netamount,
 
         -- HubSpot stage: derive name from pre-computed ID (extraction CASE, Apr 2026)
         CASE "HubSpot_Dealstage_ID"::text
@@ -72,7 +72,7 @@ WITH ranked AS (
             ELSE NULL
         END                                                         AS hubspot_dealstage_name,
         "HubSpot_Dealstage_ID"                                      AS dealstage,
-        "HubSpot_Pipeline_ID"                                       AS pipeline,
+        COALESCE("HubSpot_Pipeline_ID"::text, '766126206')          AS pipeline,
 
         -- Denormalised
         "Company_Name"                                              AS company_name,
@@ -81,7 +81,7 @@ WITH ranked AS (
         "Person_LastName"                                           AS person_lastname,
         "Person_Email"                                              AS person_email,
         "User_FullName"                                             AS user_fullname,
-        "User_Email"                                                AS user_email,
+        COALESCE("User_Email", 'thierry.villard@icalps.com')        AS user_email,
 
         -- Load-status watermark — carried through unchanged
         _load_status,
@@ -94,7 +94,7 @@ WITH ranked AS (
             ORDER BY "Oppo_UpdatedDate" DESC NULLS LAST
         )                                                           AS _dedup_rank
 
-    FROM staging.stg_opportunity
+    FROM pre_norm
     WHERE "Oppo_OpportunityId" IS NOT NULL
 )
 SELECT
@@ -116,9 +116,6 @@ SELECT
     ic_alps_cost,
     amount,
     icalps_oppocertainty,
-    ccicalps_weightedamount,
-    ccicalps_netamount,
-    ccicalps_netamount * icalps_oppocertainty                       AS ccicalps_netweightedamount,
     hubspot_dealstage_name,
     dealstage,
     pipeline,

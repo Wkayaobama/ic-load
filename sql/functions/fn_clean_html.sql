@@ -1,26 +1,28 @@
--- fn_clean_html — strip HTML tags and named entities from text.
+-- fn_clean_html — strip HTML tags and content using BeautifulSoup.
 --
--- Translated from dbt_communication/macros/clean_html.sql macro.
--- Removes <tag> constructs and &name; entities. Does NOT decode numeric
--- entities (&#39;) — those are rare in IC'ALPS and require a lookup table.
+-- Replaces the regexp_replace implementation. Uses plpython3u + bs4 4.14.3
+-- installed at /var/lib/postgresql/.local/lib/python3.10/site-packages (Apr 2026).
+-- sys.path insert is required because bs4 was installed via --user pip.
 --
--- Called by: stg_communication for comm_note, comm_subject when the source
--- is a rich-text field (HubSpot activity notes, legacy CRM notes).
---
+-- Called by: normalise_communication (comm_subject, comm_note),
+--            normalise_contact (pers_title), normalise_opportunity (icalps_dealnotes).
 -- Idempotent.
--- See IC_Load_Production_Plan.md §4.1.
 
 CREATE OR REPLACE FUNCTION staging.fn_clean_html(txt text)
 RETURNS text
-LANGUAGE sql
+LANGUAGE plpython3u
 IMMUTABLE
 AS $$
-    SELECT
-        regexp_replace(
-            regexp_replace(txt, '<[^>]+>', '', 'g'),
-            '&[a-zA-Z]+;', '', 'g'
-        )
+if txt is None:
+    return None
+import sys
+_bs4_path = '/var/lib/postgresql/.local/lib/python3.10/site-packages'
+if _bs4_path not in sys.path:
+    sys.path.insert(0, _bs4_path)
+from bs4 import BeautifulSoup
+cleaned = BeautifulSoup(txt, 'html.parser').get_text(separator=' ', strip=True)
+return cleaned if cleaned else None
 $$;
 
 COMMENT ON FUNCTION staging.fn_clean_html(text) IS
-'Strip HTML tags and named entities. NULL-safe, idempotent.';
+'Strip HTML tags using BeautifulSoup. NULL-safe, idempotent.';

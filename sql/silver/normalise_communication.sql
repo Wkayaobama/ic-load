@@ -46,8 +46,7 @@ SELECT
     "Company_Name"                                           AS comp_name,
     NULL                                                     AS comp_website,
 
-    -- Owner email not available in vCalendarCommunication extract
-    NULL                                                     AS icalps_owner_email,
+    COALESCE("Comm_OwnerEmail", 'thierry.villard@icalps.com') AS icalps_owner_email,
 
     -- Load-status watermark — carried through unchanged
     _load_status,
