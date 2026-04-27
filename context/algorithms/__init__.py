@@ -23,6 +23,11 @@ deal_stage_mapper.py
     Canonical mapping extracted from the authoritative legacy source.
     Supports French and English label normalization.
 
+phone_normalise.py
+    E.164 phone number normalization for French-origin numbers.
+    Handles various input formats (local, international, formatted).
+    Used by silver layer to normalize company and contact phone fields.
+
 _stubs.py
     Clear error stubs for silver_normalise.py and validate_silver.py
     until those files are promoted into this package (M4 resolution).
@@ -50,6 +55,9 @@ from context.algorithms import (
     normalize_stage,
     normalize_outcome,
     list_all_mappings,
+    normalise_phone_e164,
+    is_valid_e164,
+    normalise_phone_batch,
 )
 """
 from context.algorithms.levenshtein import (
@@ -80,6 +88,11 @@ from context.algorithms.deal_stage_mapper import (
     normalize_outcome,
     normalize_stage,
 )
+from context.algorithms.phone_normalise import (
+    is_valid_e164,
+    normalise_phone_batch,
+    normalise_phone_e164,
+)
 
 __all__ = [
     # levenshtein
@@ -107,4 +120,8 @@ __all__ = [
     "map_deal_stage",
     "normalize_outcome",
     "normalize_stage",
+    # phone_normalise
+    "is_valid_e164",
+    "normalise_phone_batch",
+    "normalise_phone_e164",
 ]
