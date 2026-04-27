@@ -88,29 +88,22 @@ class SilverNormaliser:
         return {"entity": "case", "status": "materialised"}
 
     def normalise_company(self) -> dict[str, Any]:
-        """Normalise company data using native module (preferred) or legacy fallback.
+        """Normalise company data using legacy module with algorithm enhancements.
 
-        Native module:
-        - Uses context.algorithms.company_siblings for sibling detection
-        - Uses context.algorithms.phone_normalise for E.164 normalisation
-        - Writes to staging.stg_company_normalised
+        The legacy module (ic_load_pipeline/python-ignorethis/silver_normalise.py):
+        - Performs full column transformation (Comp_* -> icalps_*)
+        - Applies DuckDB SQL transformations
+        - Integrates context.algorithms.company_siblings for sibling detection
+        - Integrates context.algorithms.phone_normalise for E.164 normalisation
+        - Writes to staging.stg_company_normalised with proper schema
 
-        Falls back to legacy if native is unavailable or fails.
+        NOTE: The native SilverCompanyNormaliser in pipeline/silver_company.py is
+        available for future use but doesn't yet perform the full column rename
+        transformation required by the gold layer. Use legacy for production.
         """
-        if _NATIVE_COMPANY_AVAILABLE and NativeCompanyNormaliser is not None:
-            try:
-                normaliser = NativeCompanyNormaliser()
-                result = normaliser.normalise()
-                return result
-            except Exception as e:
-                _log.warning(
-                    "Native company normaliser failed, falling back to legacy: %s", e
-                )
-
-        # Fallback to legacy
         self._ensure_legacy()
         self._legacy_delegate.normalise_company()
-        return {"entity": "company", "status": "legacy", "source": "fallback"}
+        return {"entity": "company", "status": "success", "source": "legacy_with_algorithms"}
 
     def run_all(self) -> None:
         """Delegate to legacy normaliser for all non-case entities."""

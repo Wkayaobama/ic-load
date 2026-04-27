@@ -48,33 +48,33 @@ def select_body_entity(entity: str, schema: dict[str, Any] | None = None, run: d
     cfg = schema["entities"][entity]
 
     if entity == "Company":
-        # Column mapping from stg_company_normalised (probe_post_dbt.csv):
-        # Full metadata preservation - all 27 available columns
+        # Column mapping from stg_company_normalised (produced by legacy silver_normalise.py)
+        # Maps legacy normaliser output columns -> gold layer target columns
         body = f"""
         SELECT
-            stg.icalps_company_id::text AS icalps_company_id,
-            stg.name,
-            stg.icalps_comp_website,
-            stg.city AS icalps_addresscity,
-            stg.icalps_address_country,
-            stg.icalps_company_state AS icalps_address_state,
-            stg.icalps_address_postcode,
-            stg.icalps_industry_drill_down,
+            stg.comp_companyid::text AS icalps_company_id,
+            stg.comp_name AS name,
+            stg.comp_website AS icalps_comp_website,
+            stg.address_city AS icalps_addresscity,
+            stg.icalps_country AS icalps_address_country,
+            stg.address_state AS icalps_address_state,
+            stg.address_postcode AS icalps_address_postcode,
+            stg.comp_sector AS icalps_industry_drill_down,
             stg.icalps_companyphone,
             stg.icalps_companytype,
             stg.icalps_companystatus,
-            stg.icalps_compsource,
-            stg.icalps_comp_language,
-            stg.icalps_comp_numemployees,
-            stg.icalps_companyaddress,
+            stg.comp_source AS icalps_compsource,
+            stg.icalps_language AS icalps_comp_language,
+            stg.comp_employees AS icalps_comp_numemployees,
+            stg.icalps_full_address AS icalps_companyaddress,
             stg.icalps_street_address,
-            stg.icalps_companyemail,
-            stg.linkedin_company_page,
+            stg.icalps_company_email AS icalps_companyemail,
+            stg.icalps_linkedin_url AS linkedin_company_page,
             stg.icalps_ownerid_raw,
             stg.owner_firstname AS icalps_owner_firstname,
             stg.owner_lastname AS icalps_owner_lastname,
-            stg.createdate::timestamp AS createdate,
-            stg.lastmodifieddate::timestamp AS lastmodifieddate,
+            stg.comp_createddate::timestamp AS createdate,
+            stg.comp_updateddate::timestamp AS lastmodifieddate,
             stg.icalps_canonical_domain,
             stg.icalps_sibling_index
         FROM {cfg['silver_table']} AS stg
