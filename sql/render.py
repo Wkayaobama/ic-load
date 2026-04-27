@@ -48,27 +48,27 @@ def select_body_entity(entity: str, schema: dict[str, Any] | None = None, run: d
     cfg = schema["entities"][entity]
 
     if entity == "Company":
-        # Column mapping from stg_company_normalised (produced by legacy silver_normalise.py)
-        # Maps legacy normaliser output columns -> gold layer target columns
+        # Column mapping from stg_company_normalised (produced by silver_normalise.py)
+        # Silver layer now outputs canonical icalps_* column names
         body = f"""
         SELECT
-            stg.comp_companyid::text AS icalps_company_id,
+            stg.icalps_company_id::text AS icalps_company_id,
             stg.comp_name AS name,
-            stg.comp_website AS icalps_comp_website,
-            stg.address_city AS icalps_addresscity,
-            stg.icalps_country AS icalps_address_country,
-            stg.address_state AS icalps_address_state,
-            stg.address_postcode AS icalps_address_postcode,
-            stg.comp_sector AS icalps_industry_drill_down,
+            stg.icalps_comp_website,
+            stg.icalps_addresscity,
+            stg.icalps_address_country,
+            stg.icalps_company_state AS icalps_address_state,
+            stg.icalps_address_postcode,
+            stg.icalps_company_sector AS icalps_industry_drill_down,
             stg.icalps_companyphone,
             stg.icalps_companytype,
             stg.icalps_companystatus,
-            stg.comp_source AS icalps_compsource,
-            stg.icalps_language AS icalps_comp_language,
-            stg.comp_employees AS icalps_comp_numemployees,
-            stg.icalps_full_address AS icalps_companyaddress,
+            stg.icalps_compsource,
+            stg.icalps_comp_language,
+            stg.icalps_comp_numemployees,
+            stg.icalps_companyaddress,
             stg.icalps_street_address,
-            stg.icalps_company_email AS icalps_companyemail,
+            stg.icalps_companyemail,
             stg.icalps_linkedin_url AS linkedin_company_page,
             stg.icalps_ownerid_raw,
             stg.owner_firstname AS icalps_owner_firstname,
@@ -81,68 +81,71 @@ def select_body_entity(entity: str, schema: dict[str, Any] | None = None, run: d
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         """
     elif entity == "Person":
-        # Column mapping from stg_contact_normalised (probe_post_dbt.csv):
-        # Full metadata preservation - all available contact fields
+        # Column mapping from stg_contact_normalised (produced by silver_normalise.py)
+        # Silver layer now outputs canonical icalps_* column names
         body = f"""
         SELECT
             stg.icalps_contact_id::text AS icalps_contact_id,
             stg.icalps_company_id::text AS icalps_company_id,
-            stg.email,
-            stg.firstname,
-            stg.lastname,
-            stg.salutation,
+            stg.icalps_email AS email,
+            stg.pers_firstname AS firstname,
+            stg.pers_lastname AS lastname,
+            stg.pers_salutation AS salutation,
             stg.icalps_perstitle,
             stg.icalps_department,
             stg.icalps_contactstatus,
+            stg.icalps_language,
             stg.icalps_businessphone,
             stg.icalps_mobilephone,
-            stg.icalps_companyaddress,
+            stg.icalps_full_address AS icalps_companyaddress,
             stg.icalps_street_address,
             stg.icalps_addresscity,
-            stg.state,
+            stg.address_state AS state,
             stg.icalps_address_country,
-            stg.zip,
-            stg.linkedin_url,
+            stg.address_postcode AS zip,
+            stg.icalps_linkedin_url AS linkedin_url,
             stg.company_name AS icalps_company_name,
-            stg.createdate::timestamp AS createdate,
-            stg.lastmodifieddate::timestamp AS lastmodifieddate
+            stg.pers_createddate::timestamp AS createdate,
+            stg.pers_updateddate::timestamp AS lastmodifieddate
         FROM {cfg['silver_table']} AS stg
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         """
     elif entity == "Opportunity":
-        # Column mapping from stg_opportunity_normalised (probe_post_dbt.csv):
-        # Full metadata preservation - all available opportunity fields + computed columns
+        # Column mapping from stg_opportunity_normalised (produced by silver_normalise.py)
+        # Silver layer now outputs canonical icalps_* column names
         body = f"""
         SELECT
             stg.icalps_deal_id::text AS icalps_deal_id,
             stg.icalps_company_id::text AS icalps_company_id,
             stg.icalps_contact_id::text AS icalps_contact_id,
-            stg.dealname,
-            stg.pipeline,
-            stg.dealstage,
+            stg.oppo_description AS dealname,
+            stg.hubspot_pipeline_id AS pipeline,
+            stg.hubspot_dealstage_name AS dealstage,
             stg.hubspot_dealstage_name,
             stg.icalps_stage,
             stg.icalps_dealstatus,
             stg.icalps_dealtype,
             stg.oppo_category,
             stg.icalps_dealnotes,
-            stg.amount::numeric AS amount,
-            stg.amount::numeric AS ic_alps_forecast,
-            stg.ic_alps_cost::numeric AS ic_alps_cost,
-            stg.icalps_oppocertainty::numeric AS icalps_oppocertainty,
-            (stg.amount::numeric - COALESCE(stg.ic_alps_cost::numeric, 0)) AS net_amount,
-            ((stg.amount::numeric - COALESCE(stg.ic_alps_cost::numeric, 0)) * COALESCE(stg.icalps_oppocertainty::numeric, 0) / 100.0) AS net_weighted_amount,
+            stg.icalps_forecast::numeric AS amount,
+            stg.icalps_forecast::numeric AS ic_alps_forecast,
+            stg.icalps_cost::numeric AS ic_alps_cost,
+            stg.icalps_dealcertainty::numeric AS icalps_oppocertainty,
+            stg.cc_net::numeric AS net_amount,
+            stg.cc_net_weighted::numeric AS net_weighted_amount,
             stg.icalps_closedate::timestamp AS closedate,
             stg.icalps_opendate::timestamp AS icalps_opendate,
-            stg.hubspot_owner_id,
+            stg.icalps_effectiveclosedate::timestamp AS icalps_effectiveclosedate,
+            stg.icalps_companyphone,
+            stg.oppo_assigneduserid AS hubspot_owner_id,
             stg.company_name AS icalps_company_name,
             stg.person_firstname AS icalps_contact_firstname,
             stg.person_lastname AS icalps_contact_lastname,
             stg.person_email AS icalps_contact_email,
             stg.user_fullname AS icalps_owner_name,
             stg.user_email AS icalps_owner_email,
-            stg.createdate::timestamp AS createdate,
-            stg.lastmodifieddate::timestamp AS lastmodifieddate
+            stg.oppo_createddate::timestamp AS createdate,
+            stg.oppo_updateddate::timestamp AS lastmodifieddate
         FROM {cfg['silver_table']} AS stg
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         """
@@ -199,12 +202,12 @@ def render_entity_upsert(entity: str, schema: dict[str, Any] | None = None, run:
         """
     elif entity == "Person":
         # INSERT columns must match SELECT order from select_body_entity("Person")
-        # Full metadata preservation - 21 columns
+        # Full metadata preservation - 22 columns (added icalps_language)
         body = f"""
         INSERT INTO {cfg['gold_table']} (
             icalps_contact_id, icalps_company_id, email, firstname, lastname,
             salutation, icalps_perstitle, icalps_department, icalps_contactstatus,
-            icalps_businessphone, icalps_mobilephone, icalps_companyaddress,
+            icalps_language, icalps_businessphone, icalps_mobilephone, icalps_companyaddress,
             icalps_street_address, icalps_addresscity, state, icalps_address_country,
             zip, linkedin_url, icalps_company_name, createdate, lastmodifieddate
         )
@@ -219,6 +222,7 @@ def render_entity_upsert(entity: str, schema: dict[str, Any] | None = None, run:
             icalps_perstitle = EXCLUDED.icalps_perstitle,
             icalps_department = EXCLUDED.icalps_department,
             icalps_contactstatus = EXCLUDED.icalps_contactstatus,
+            icalps_language = EXCLUDED.icalps_language,
             icalps_businessphone = EXCLUDED.icalps_businessphone,
             icalps_mobilephone = EXCLUDED.icalps_mobilephone,
             icalps_companyaddress = EXCLUDED.icalps_companyaddress,
@@ -234,17 +238,18 @@ def render_entity_upsert(entity: str, schema: dict[str, Any] | None = None, run:
         """
     elif entity == "Opportunity":
         # INSERT columns must match SELECT order from select_body_entity("Opportunity")
-        # Full metadata preservation - 30 columns
+        # Full metadata preservation - 32 columns (added icalps_effectiveclosedate, icalps_companyphone)
         body = f"""
         INSERT INTO {cfg['gold_table']} (
             icalps_deal_id, icalps_company_id, icalps_contact_id, dealname,
             pipeline, dealstage, hubspot_dealstage_name, icalps_stage,
             icalps_dealstatus, icalps_dealtype, oppo_category, icalps_dealnotes,
-            amount, icalps_dealforecast, ic_alps_cost, icalps_dealcertainty,
-            icalps_netamount_k__, icalps_net_weighted_amount, closedate, icalps_opendate,
-            hubspot_owner_id, icalps_company_name, icalps_contact_firstname,
-            icalps_contact_lastname, icalps_contact_email, icalps_owner_name,
-            icalps_owner_email, createdate, lastmodifieddate
+            amount, ic_alps_forecast, ic_alps_cost, icalps_oppocertainty,
+            net_amount, net_weighted_amount, closedate, icalps_opendate,
+            icalps_effectiveclosedate, icalps_companyphone, hubspot_owner_id,
+            icalps_company_name, icalps_contact_firstname, icalps_contact_lastname,
+            icalps_contact_email, icalps_owner_name, icalps_owner_email,
+            createdate, lastmodifieddate
         )
         {sel}
         ON CONFLICT ({cfg['upsert']['match_column']}) DO UPDATE
@@ -261,13 +266,15 @@ def render_entity_upsert(entity: str, schema: dict[str, Any] | None = None, run:
             oppo_category = EXCLUDED.oppo_category,
             icalps_dealnotes = EXCLUDED.icalps_dealnotes,
             amount = EXCLUDED.amount,
-            icalps_dealforecast = EXCLUDED.icalps_dealforecast,
+            ic_alps_forecast = EXCLUDED.ic_alps_forecast,
             ic_alps_cost = EXCLUDED.ic_alps_cost,
-            icalps_dealcertainty = EXCLUDED.icalps_dealcertainty,
-            icalps_netamount_k__ = EXCLUDED.icalps_netamount_k__,
-            icalps_net_weighted_amount = EXCLUDED.icalps_net_weighted_amount,
+            icalps_oppocertainty = EXCLUDED.icalps_oppocertainty,
+            net_amount = EXCLUDED.net_amount,
+            net_weighted_amount = EXCLUDED.net_weighted_amount,
             closedate = EXCLUDED.closedate,
             icalps_opendate = EXCLUDED.icalps_opendate,
+            icalps_effectiveclosedate = EXCLUDED.icalps_effectiveclosedate,
+            icalps_companyphone = EXCLUDED.icalps_companyphone,
             hubspot_owner_id = EXCLUDED.hubspot_owner_id,
             icalps_company_name = EXCLUDED.icalps_company_name,
             icalps_contact_firstname = EXCLUDED.icalps_contact_firstname,
