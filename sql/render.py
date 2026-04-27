@@ -48,56 +48,99 @@ def select_body_entity(entity: str, schema: dict[str, Any] | None = None, run: d
     cfg = schema["entities"][entity]
 
     if entity == "Company":
+        # Column mapping from stg_company_normalised (probe_post_dbt.csv):
+        # Full metadata preservation - all 27 available columns
         body = f"""
         SELECT
-            stg.comp_companyid::text,
-            stg.comp_name,
-            stg.comp_website,
-            stg.address_city,
-            stg.icalps_country,
-            stg.address_state,
-            stg.address_postcode,
-            stg.comp_sector,
+            stg.icalps_company_id::text AS icalps_company_id,
+            stg.name,
+            stg.icalps_comp_website,
+            stg.city AS icalps_addresscity,
+            stg.icalps_address_country,
+            stg.icalps_company_state AS icalps_address_state,
+            stg.icalps_address_postcode,
+            stg.icalps_industry_drill_down,
             stg.icalps_companyphone,
             stg.icalps_companytype,
-            stg.comp_sector
+            stg.icalps_companystatus,
+            stg.icalps_compsource,
+            stg.icalps_comp_language,
+            stg.icalps_comp_numemployees,
+            stg.icalps_companyaddress,
+            stg.icalps_street_address,
+            stg.icalps_companyemail,
+            stg.linkedin_company_page,
+            stg.icalps_ownerid_raw,
+            stg.owner_firstname AS icalps_owner_firstname,
+            stg.owner_lastname AS icalps_owner_lastname,
+            stg.createdate::timestamp AS createdate,
+            stg.lastmodifieddate::timestamp AS lastmodifieddate
         FROM {cfg['silver_table']} AS stg
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         """
     elif entity == "Person":
+        # Column mapping from stg_contact_normalised (probe_post_dbt.csv):
+        # Full metadata preservation - all available contact fields
         body = f"""
         SELECT
-            stg.pers_personid::text,
-            stg.icalps_email,
-            stg.pers_firstname,
-            stg.pers_lastname,
-            stg.icalps_title,
+            stg.icalps_contact_id::text AS icalps_contact_id,
+            stg.icalps_company_id::text AS icalps_company_id,
+            stg.email,
+            stg.firstname,
+            stg.lastname,
+            stg.salutation,
+            stg.icalps_perstitle,
+            stg.icalps_department,
+            stg.icalps_contactstatus,
             stg.icalps_businessphone,
             stg.icalps_mobilephone,
-            stg.address_city,
-            stg.address_state,
-            stg.icalps_country,
-            stg.address_postcode,
-            stg.pers_updateddate::timestamp
+            stg.icalps_companyaddress,
+            stg.icalps_street_address,
+            stg.icalps_addresscity,
+            stg.state,
+            stg.icalps_address_country,
+            stg.zip,
+            stg.linkedin_url,
+            stg.company_name AS icalps_company_name,
+            stg.createdate::timestamp AS createdate,
+            stg.lastmodifieddate::timestamp AS lastmodifieddate
         FROM {cfg['silver_table']} AS stg
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         """
     elif entity == "Opportunity":
-        computed = cfg["upsert"]["computed_columns"]
+        # Column mapping from stg_opportunity_normalised (probe_post_dbt.csv):
+        # Full metadata preservation - all available opportunity fields + computed columns
         body = f"""
         SELECT
-            stg.oppo_opportunityid::text,
-            stg.oppo_description,
-            stg.hubspot_pipeline_id,
-            stg.hubspot_dealstage_id,
-            stg.icalps_forecast::numeric,
-            stg.icalps_forecast::numeric,
-            stg.icalps_certainty::numeric,
-            stg.oppo_type,
-            stg.oppo_notes,
-            {computed['net_amount']},
-            {computed['net_weighted_amount']},
-            stg.icalps_closedate::timestamp
+            stg.icalps_deal_id::text AS icalps_deal_id,
+            stg.icalps_company_id::text AS icalps_company_id,
+            stg.icalps_contact_id::text AS icalps_contact_id,
+            stg.dealname,
+            stg.pipeline,
+            stg.dealstage,
+            stg.hubspot_dealstage_name,
+            stg.icalps_stage,
+            stg.icalps_dealstatus,
+            stg.icalps_dealtype,
+            stg.oppo_category,
+            stg.icalps_dealnotes,
+            stg.amount::numeric AS amount,
+            stg.amount::numeric AS ic_alps_forecast,
+            stg.ic_alps_cost::numeric AS ic_alps_cost,
+            stg.icalps_oppocertainty::numeric AS icalps_oppocertainty,
+            (stg.amount::numeric - COALESCE(stg.ic_alps_cost::numeric, 0)) AS net_amount,
+            ((stg.amount::numeric - COALESCE(stg.ic_alps_cost::numeric, 0)) * COALESCE(stg.icalps_oppocertainty::numeric, 0) / 100.0) AS net_weighted_amount,
+            stg.icalps_closedate::timestamp AS closedate,
+            stg.icalps_opendate::timestamp AS icalps_opendate,
+            stg.hubspot_owner_id,
+            stg.company_name AS icalps_company_name,
+            stg.person_firstname AS icalps_contact_firstname,
+            stg.person_lastname AS icalps_contact_lastname,
+            stg.person_email AS icalps_contact_email,
+            stg.user_fullname AS icalps_owner_name,
+            stg.user_email AS icalps_owner_email,
+            stg.createdate::timestamp AS createdate,
+            stg.lastmodifieddate::timestamp AS lastmodifieddate
         FROM {cfg['silver_table']} AS stg
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         """
@@ -114,67 +157,124 @@ def render_entity_upsert(entity: str, schema: dict[str, Any] | None = None, run:
     sel = select_body_entity(entity, schema, run)
 
     if entity == "Company":
+        # INSERT columns must match SELECT order from select_body_entity("Company")
+        # Full metadata preservation - 23 columns
         body = f"""
         INSERT INTO {cfg['gold_table']} (
-            icalps_company_id, name, icalps_comp_website, city, country, state,
-            zip, industry, phone, comp_type, comp_sector
+            icalps_company_id, name, icalps_comp_website, icalps_addresscity,
+            icalps_address_country, icalps_address_state, icalps_address_postcode,
+            icalps_industry_drill_down, icalps_companyphone, icalps_companytype,
+            icalps_companystatus, icalps_compsource, icalps_comp_language,
+            icalps_comp_numemployees, icalps_companyaddress, icalps_street_address,
+            icalps_companyemail, linkedin_company_page, icalps_ownerid_raw,
+            icalps_owner_firstname, icalps_owner_lastname, createdate, lastmodifieddate
         )
         {sel}
         ON CONFLICT ({cfg['upsert']['match_column']}) DO UPDATE
         SET
             name = EXCLUDED.name,
             icalps_comp_website = EXCLUDED.icalps_comp_website,
-            city = EXCLUDED.city,
-            country = EXCLUDED.country,
-            state = EXCLUDED.state,
-            zip = EXCLUDED.zip,
-            industry = EXCLUDED.industry,
-            phone = EXCLUDED.phone,
-            comp_type = EXCLUDED.comp_type,
-            comp_sector = EXCLUDED.comp_sector;
+            icalps_addresscity = EXCLUDED.icalps_addresscity,
+            icalps_address_country = EXCLUDED.icalps_address_country,
+            icalps_address_state = EXCLUDED.icalps_address_state,
+            icalps_address_postcode = EXCLUDED.icalps_address_postcode,
+            icalps_industry_drill_down = EXCLUDED.icalps_industry_drill_down,
+            icalps_companyphone = EXCLUDED.icalps_companyphone,
+            icalps_companytype = EXCLUDED.icalps_companytype,
+            icalps_companystatus = EXCLUDED.icalps_companystatus,
+            icalps_compsource = EXCLUDED.icalps_compsource,
+            icalps_comp_language = EXCLUDED.icalps_comp_language,
+            icalps_comp_numemployees = EXCLUDED.icalps_comp_numemployees,
+            icalps_companyaddress = EXCLUDED.icalps_companyaddress,
+            icalps_street_address = EXCLUDED.icalps_street_address,
+            icalps_companyemail = EXCLUDED.icalps_companyemail,
+            linkedin_company_page = EXCLUDED.linkedin_company_page,
+            icalps_ownerid_raw = EXCLUDED.icalps_ownerid_raw,
+            icalps_owner_firstname = EXCLUDED.icalps_owner_firstname,
+            icalps_owner_lastname = EXCLUDED.icalps_owner_lastname,
+            createdate = EXCLUDED.createdate,
+            lastmodifieddate = EXCLUDED.lastmodifieddate;
         """
     elif entity == "Person":
+        # INSERT columns must match SELECT order from select_body_entity("Person")
+        # Full metadata preservation - 21 columns
         body = f"""
         INSERT INTO {cfg['gold_table']} (
-            icalps_contact_id, email, firstname, lastname, jobtitle, phone,
-            mobilephone, city, state, country, zip, lastmodifieddate
+            icalps_contact_id, icalps_company_id, email, firstname, lastname,
+            salutation, icalps_perstitle, icalps_department, icalps_contactstatus,
+            icalps_businessphone, icalps_mobilephone, icalps_companyaddress,
+            icalps_street_address, icalps_addresscity, state, icalps_address_country,
+            zip, linkedin_url, icalps_company_name, createdate, lastmodifieddate
         )
         {sel}
         ON CONFLICT ({cfg['upsert']['match_column']}) DO UPDATE
         SET
+            icalps_company_id = EXCLUDED.icalps_company_id,
             email = EXCLUDED.email,
             firstname = EXCLUDED.firstname,
             lastname = EXCLUDED.lastname,
-            jobtitle = EXCLUDED.jobtitle,
-            phone = EXCLUDED.phone,
-            mobilephone = EXCLUDED.mobilephone,
-            city = EXCLUDED.city,
+            salutation = EXCLUDED.salutation,
+            icalps_perstitle = EXCLUDED.icalps_perstitle,
+            icalps_department = EXCLUDED.icalps_department,
+            icalps_contactstatus = EXCLUDED.icalps_contactstatus,
+            icalps_businessphone = EXCLUDED.icalps_businessphone,
+            icalps_mobilephone = EXCLUDED.icalps_mobilephone,
+            icalps_companyaddress = EXCLUDED.icalps_companyaddress,
+            icalps_street_address = EXCLUDED.icalps_street_address,
+            icalps_addresscity = EXCLUDED.icalps_addresscity,
             state = EXCLUDED.state,
-            country = EXCLUDED.country,
+            icalps_address_country = EXCLUDED.icalps_address_country,
             zip = EXCLUDED.zip,
+            linkedin_url = EXCLUDED.linkedin_url,
+            icalps_company_name = EXCLUDED.icalps_company_name,
+            createdate = EXCLUDED.createdate,
             lastmodifieddate = EXCLUDED.lastmodifieddate;
         """
     elif entity == "Opportunity":
+        # INSERT columns must match SELECT order from select_body_entity("Opportunity")
+        # Full metadata preservation - 30 columns
         body = f"""
         INSERT INTO {cfg['gold_table']} (
-            icalps_deal_id, dealname, pipeline, dealstage, amount,
-            icalps_dealforecast, icalps_dealcertainty, icalps_dealtype,
-            icalps_dealnotes, icalps_netamount_k__, icalps_net_weighted_amount, closedate
+            icalps_deal_id, icalps_company_id, icalps_contact_id, dealname,
+            pipeline, dealstage, hubspot_dealstage_name, icalps_stage,
+            icalps_dealstatus, icalps_dealtype, oppo_category, icalps_dealnotes,
+            amount, icalps_dealforecast, ic_alps_cost, icalps_dealcertainty,
+            icalps_netamount_k__, icalps_net_weighted_amount, closedate, icalps_opendate,
+            hubspot_owner_id, icalps_company_name, icalps_contact_firstname,
+            icalps_contact_lastname, icalps_contact_email, icalps_owner_name,
+            icalps_owner_email, createdate, lastmodifieddate
         )
         {sel}
         ON CONFLICT ({cfg['upsert']['match_column']}) DO UPDATE
         SET
+            icalps_company_id = EXCLUDED.icalps_company_id,
+            icalps_contact_id = EXCLUDED.icalps_contact_id,
             dealname = EXCLUDED.dealname,
             pipeline = EXCLUDED.pipeline,
             dealstage = EXCLUDED.dealstage,
+            hubspot_dealstage_name = EXCLUDED.hubspot_dealstage_name,
+            icalps_stage = EXCLUDED.icalps_stage,
+            icalps_dealstatus = EXCLUDED.icalps_dealstatus,
+            icalps_dealtype = EXCLUDED.icalps_dealtype,
+            oppo_category = EXCLUDED.oppo_category,
+            icalps_dealnotes = EXCLUDED.icalps_dealnotes,
             amount = EXCLUDED.amount,
             icalps_dealforecast = EXCLUDED.icalps_dealforecast,
+            ic_alps_cost = EXCLUDED.ic_alps_cost,
             icalps_dealcertainty = EXCLUDED.icalps_dealcertainty,
-            icalps_dealtype = EXCLUDED.icalps_dealtype,
-            icalps_dealnotes = EXCLUDED.icalps_dealnotes,
             icalps_netamount_k__ = EXCLUDED.icalps_netamount_k__,
             icalps_net_weighted_amount = EXCLUDED.icalps_net_weighted_amount,
-            closedate = EXCLUDED.closedate;
+            closedate = EXCLUDED.closedate,
+            icalps_opendate = EXCLUDED.icalps_opendate,
+            hubspot_owner_id = EXCLUDED.hubspot_owner_id,
+            icalps_company_name = EXCLUDED.icalps_company_name,
+            icalps_contact_firstname = EXCLUDED.icalps_contact_firstname,
+            icalps_contact_lastname = EXCLUDED.icalps_contact_lastname,
+            icalps_contact_email = EXCLUDED.icalps_contact_email,
+            icalps_owner_name = EXCLUDED.icalps_owner_name,
+            icalps_owner_email = EXCLUDED.icalps_owner_email,
+            createdate = EXCLUDED.createdate,
+            lastmodifieddate = EXCLUDED.lastmodifieddate;
         """
     else:
         raise KeyError(f"Unsupported entity upsert rendering target: {entity}")

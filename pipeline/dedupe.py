@@ -263,26 +263,28 @@ class DedupeGuardrail:
         return rows
 
     def _candidate_identifier(self, entity: str, row: pd.Series) -> tuple[str, str]:
+        # Column names match stg_*_normalised tables (probe_post_dbt.csv)
         if entity == "company":
-            key = _norm_id(row.get("comp_companyid"))
+            key = _norm_id(row.get("icalps_company_id"))
             return key, key
         if entity == "contact":
-            key = _norm_id(row.get("pers_personid"))
+            key = _norm_id(row.get("icalps_contact_id"))
             return key, key
         if entity == "opportunity":
-            key = _norm_id(row.get("oppo_opportunityid"))
+            key = _norm_id(row.get("icalps_deal_id"))
             return key, key
         key = _norm_id(row.get("icalps_ticket_id"))
         return key, key
 
     def _candidate_identity_key(self, entity: str, row: pd.Series) -> str:
+        # Column names match stg_*_normalised tables (probe_post_dbt.csv)
         if entity == "company":
-            return f"{_norm_domain(row.get('comp_website'))}|{_company_root(row.get('comp_name'))}"
+            return f"{_norm_domain(row.get('icalps_comp_website'))}|{_company_root(row.get('name'))}"
         if entity == "contact":
-            email = _norm_email(row.get("icalps_email"))
-            return email or f"{_norm_text(row.get('pers_firstname'))}|{_norm_text(row.get('pers_lastname'))}|{_norm_id(row.get('pers_companyid'))}"
+            email = _norm_email(row.get("email"))
+            return email or f"{_norm_text(row.get('firstname'))}|{_norm_text(row.get('lastname'))}|{_norm_id(row.get('icalps_company_id'))}"
         if entity == "opportunity":
-            return f"{_norm_text(row.get('oppo_description'))}|{_norm_id(row.get('oppo_primarycompanyid'))}"
+            return f"{_norm_text(row.get('dealname'))}|{_norm_id(row.get('icalps_company_id'))}"
         if entity == "case":
             return f"{_norm_text(row.get('subject'))}|{_norm_id(row.get('icalps_company_id'))}"
         return ""

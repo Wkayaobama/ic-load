@@ -40,7 +40,8 @@ def _default_specs(bronze_root: Path) -> list[BronzeProbeSpec]:
             normalised_table="stg_company_normalised",
             bronze_pk="Comp_CompanyId",
             raw_pk="Comp_CompanyId",
-            normalised_pk="comp_companyid",
+            # Normalised PK matches stg_company_normalised (probe_post_dbt.csv)
+            normalised_pk="icalps_company_id",
             selected_columns=["Comp_CompanyId", "Comp_Name", "Comp_WebSite", "Comp_Territory", "Comp_Sector", "Comp_UpdatedDate"],
         ),
         BronzeProbeSpec(
@@ -50,7 +51,8 @@ def _default_specs(bronze_root: Path) -> list[BronzeProbeSpec]:
             normalised_table="stg_contact_normalised",
             bronze_pk="Pers_PersonId",
             raw_pk="Pers_PersonId",
-            normalised_pk="pers_personid",
+            # Normalised PK matches stg_contact_normalised (probe_post_dbt.csv)
+            normalised_pk="icalps_contact_id",
             selected_columns=["Pers_PersonId", "Pers_CompanyId", "Pers_FirstName", "Pers_LastName", "Person_Email", "Pers_UpdatedDate"],
         ),
         BronzeProbeSpec(
@@ -60,7 +62,8 @@ def _default_specs(bronze_root: Path) -> list[BronzeProbeSpec]:
             normalised_table="stg_opportunity_normalised",
             bronze_pk="Oppo_OpportunityId",
             raw_pk="Oppo_OpportunityId",
-            normalised_pk="oppo_opportunityid",
+            # Normalised PK matches stg_opportunity_normalised (probe_post_dbt.csv)
+            normalised_pk="icalps_deal_id",
             selected_columns=[
                 "Oppo_OpportunityId",
                 "Oppo_PrimaryCompanyId",

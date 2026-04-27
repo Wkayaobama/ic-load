@@ -71,9 +71,39 @@ entities:
       load_status_column: "_load_status"
       allowed_statuses: ["NEW", "MODIFIED"]
       computed_columns:
-        weighted_forecast: "icalps_forecast::numeric * (icalps_certainty::numeric / 100.0)"
-        net_amount: "icalps_forecast::numeric - icalps_icalps_cost::numeric"
-        net_weighted_amount: "(icalps_forecast::numeric - icalps_icalps_cost::numeric) * (icalps_certainty::numeric / 100.0)"
+        # Column names match stg_opportunity_normalised (probe_post_dbt.csv):
+        # amount (forecast), ic_alps_cost, icalps_oppocertainty
+        weighted_forecast: "stg.amount::numeric * (stg.icalps_oppocertainty::numeric / 100.0)"
+        net_amount: "stg.amount::numeric - COALESCE(stg.ic_alps_cost::numeric, 0)"
+        net_weighted_amount: "(stg.amount::numeric - COALESCE(stg.ic_alps_cost::numeric, 0)) * COALESCE(stg.icalps_oppocertainty::numeric, 0) / 100.0"
+
+  emails_meetings:
+    pathway: api_native
+    schema_version: "1.1.0"
+    object_types: [emails, meetings]
+    source_mart: "staging.fct_communication_email_meetings"
+    ledger_table: "staging.fct_emails_posted"
+    batch_size: 100
+    idempotency_key_pattern:
+      email:   "'icalps_email_' || icalps_communication_id::text"
+      meeting: "'icalps_mtg_'   || icalps_communication_id::text"
+    association_type_ids:
+      email_contact:   198
+      email_company:   186
+      meeting_contact: 200
+      meeting_company: 188
+    fk_resolution:
+      contact: {icalps_prop: icalps_contact_id, hubspot_table: "hubspot.contacts", violation_policy: WARN}
+      company: {icalps_prop: icalps_company_id, hubspot_table: "hubspot.companies", violation_policy: WARN}
+    artifact_schema:
+      entity_key: emails_meetings
+      stages: [LEDGER_BOOTSTRAP, SOURCE_FETCH, FK_RESOLVE, BATCH_POST_EMAILS, BATCH_POST_MEETINGS, PATCH_DATES]
+    runner_contract:
+      import_order: 7
+      mode: standalone
+      approval_gates:
+        - {stage: BATCH_POST_EMAILS,  env_var: ICALPS_APPROVE_EMAIL_POST}
+        - {stage: BATCH_POST_MEETINGS, env_var: ICALPS_APPROVE_MEETING_POST}
 
   Communication:
     idempotency_prefix: "icalps_"
