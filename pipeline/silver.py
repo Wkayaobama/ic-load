@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import importlib.util
 import logging
 from dataclasses import dataclass
-from types import ModuleType
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -11,7 +9,8 @@ _log = logging.getLogger(__name__)
 from context.config import PROJECT_ROOT
 from context.db import get_connection
 
-_LEGACY_ROOT = PROJECT_ROOT.parent / "ic_load_pipeline" / "python-ignorethis"
+# Import standalone legacy normaliser (now bundled in ic-load/legacy/)
+from legacy.silver_normalise import SilverNormaliser as LegacySilverNormaliser
 
 # Native company normaliser — preferred over legacy
 _NATIVE_COMPANY_AVAILABLE = False
@@ -25,38 +24,26 @@ except ImportError:
 _CASE_SQL_DIR = PROJECT_ROOT / "sql" / "case"
 
 
-def _load_legacy_module(module_name: str, filename: str) -> ModuleType:
-    path = _LEGACY_ROOT / filename
-    if not path.exists():
-        raise RuntimeError(f"Legacy module is unavailable: {path}")
-
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load legacy module spec for {path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 class SilverNormaliser:
-    """Thin salvage wrapper around the proven legacy Silver normaliser.
+    """Thin wrapper around the standalone Silver normaliser.
 
     This keeps the validated business logic alive while the clean repo owns the
     orchestration, SQL rendering, and remote execution surface around it.
 
     For 'case', the normaliser is self-contained in sql/case/ and does NOT
-    depend on the legacy module path — it uses native SQL executed via context.db.
+    depend on the legacy module — it uses native SQL executed via context.db.
+
+    The legacy normaliser is now bundled in ic-load/legacy/silver_normalise.py
+    for standalone operation (no external repo dependency).
     """
 
     def __init__(self):
         # Legacy delegate loaded lazily; case entity uses its own path
-        self._legacy_delegate: Any = None
+        self._legacy_delegate: LegacySilverNormaliser | None = None
 
     def _ensure_legacy(self) -> None:
         if self._legacy_delegate is None:
-            module = _load_legacy_module("ic_load_legacy_silver_normalise", "silver_normalise.py")
-            self._legacy_delegate = module.SilverNormaliser()
+            self._legacy_delegate = LegacySilverNormaliser()
 
     def normalise_case(self) -> dict[str, Any]:
         """Materialise staging.stg_case_v2 from the Bronze raw stg_cases table.
@@ -88,9 +75,9 @@ class SilverNormaliser:
         return {"entity": "case", "status": "materialised"}
 
     def normalise_company(self) -> dict[str, Any]:
-        """Normalise company data using legacy module with algorithm enhancements.
+        """Normalise company data using standalone legacy module with algorithm enhancements.
 
-        The legacy module (ic_load_pipeline/python-ignorethis/silver_normalise.py):
+        The legacy module (ic-load/legacy/silver_normalise.py):
         - Performs full column transformation (Comp_* -> icalps_*)
         - Applies DuckDB SQL transformations
         - Integrates context.algorithms.company_siblings for sibling detection
@@ -103,7 +90,7 @@ class SilverNormaliser:
         """
         self._ensure_legacy()
         self._legacy_delegate.normalise_company()
-        return {"entity": "company", "status": "success", "source": "legacy_with_algorithms"}
+        return {"entity": "company", "status": "success", "source": "legacy_standalone"}
 
     def run_all(self) -> None:
         """Delegate to legacy normaliser for all non-case entities."""
@@ -128,7 +115,7 @@ class SilverValidator:
     """Silver validator.
 
     For 'case': runs sql/case/04_silver_validate.sql directly.
-    For all other entities: delegates to the legacy validator.
+    For all other entities: delegates to the standalone legacy validator.
     """
 
     def __init__(self, entity: str = ""):
@@ -138,8 +125,8 @@ class SilverValidator:
 
     def _ensure_legacy(self) -> None:
         if self._legacy_delegate is None:
-            module = _load_legacy_module("ic_load_legacy_validate_silver", "validate_silver.py")
-            self._legacy_delegate = module.SilverValidator()
+            from legacy.validate_silver import SilverValidator as LegacyValidator
+            self._legacy_delegate = LegacyValidator()
 
     def run_checks(self) -> bool:
         if self._entity == "case":
