@@ -135,17 +135,17 @@ class SilverValidator:
 
         # Address city fill rate
         city_fill = self._scalar("""
-            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE Address_City IS NOT NULL AND Address_City != '') / COUNT(*), 2)
+            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE icalps_addresscity IS NOT NULL AND icalps_addresscity != '') / COUNT(*), 2)
             FROM staging.stg_company_normalised
         """)
         self._add("company.city_fill_pct", "INFO", city_fill, ">50%", city_fill > 50)
 
         # Unmapped country values
         unmapped_countries = self._q("""
-            SELECT icalps_country_raw, COUNT(*) as n
+            SELECT icalps_address_country, COUNT(*) as n
             FROM staging.stg_company_normalised
-            WHERE icalps_country_raw IS NOT NULL
-              AND icalps_country_raw != ''
+            WHERE icalps_address_country IS NOT NULL
+              AND icalps_address_country != ''
               AND icalps_country IS NULL
             GROUP BY 1 ORDER BY 2 DESC LIMIT 20
         """)
@@ -198,7 +198,7 @@ class SilverValidator:
 
         # Status void rate
         void_status = self._scalar("""
-            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE icalps_pers_status IS NULL) / COUNT(*), 2)
+            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE icalps_contactstatus IS NULL) / COUNT(*), 2)
             FROM staging.stg_contact_normalised
         """)
         self._add("contact.status_void_pct", "WARN", void_status, "<10%", void_status < 10)
@@ -223,10 +223,10 @@ class SilverValidator:
                   null_stage == 0,
                   "Active deals must have hubspot_dealstage_name. Check deal_stage_mapper.py")
 
-        # Duplicate Oppo_OpportunityId
+        # Duplicate icalps_deal_id (opportunity PK)
         dup_ids = int(self._scalar("""
             SELECT COUNT(*) FROM (
-                SELECT Oppo_OpportunityId, COUNT(*) as n
+                SELECT icalps_deal_id, COUNT(*) as n
                 FROM staging.stg_opportunity_normalised
                 GROUP BY 1 HAVING COUNT(*) > 1
             ) dups
@@ -249,7 +249,7 @@ class SilverValidator:
         # Close date null rate for Won/Lost deals
         null_close = int(self._scalar("""
             SELECT COUNT(*) FROM staging.stg_opportunity_normalised
-            WHERE Oppo_Status IN ('Gagnee','Perdue','Gagnee','Won','Lost','Closed Won','Closed Lost')
+            WHERE icalps_dealstatus IN ('Gagnee','Perdue','Gagnee','Won','Lost','Closed Won','Closed Lost')
               AND icalps_closedate IS NULL
         """))
         self._add("opportunity.null_closedate_won_lost", "WARN", null_close, "=0",
@@ -318,9 +318,9 @@ class SilverValidator:
         print("\n[validate] -- Reconciliation Rates -----------------------------")
 
         for entity, staging_table, pk_col, hs_table, hs_key in [
-            ("company",  "staging.stg_company_normalised",     "Comp_CompanyId",      "hubspot.companies", "icalps_company_id"),
-            ("contact",  "staging.stg_contact_normalised",     "Pers_PersonId",       "hubspot.contacts",  "icalps_contact_id"),
-            ("deal",     "staging.stg_opportunity_normalised", "Oppo_OpportunityId",  "hubspot.deals",     "icalps_deal_id"),
+            ("company",  "staging.stg_company_normalised",     "icalps_company_id",   "hubspot.companies", "icalps_company_id"),
+            ("contact",  "staging.stg_contact_normalised",     "icalps_contact_id",   "hubspot.contacts",  "icalps_contact_id"),
+            ("deal",     "staging.stg_opportunity_normalised", "icalps_deal_id",      "hubspot.deals",     "icalps_deal_id"),
         ]:
             try:
                 row = self._q(f"""

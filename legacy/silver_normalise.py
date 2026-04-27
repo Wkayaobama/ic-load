@@ -499,8 +499,11 @@ class SilverNormaliser:
         # Effective close date: actual close (when deal was won/lost), fallback to target close
         oppo_actual_close_sql  = _col_or_null("Oppo_ActualClose", "icalps_effectiveclosedate")
         oppo_closed_sql        = _col_or_null("Oppo_Closed", "oppo_closed")
-        hs_dealstage_sql       = _col_or_null("hubspot_dealstage_name", "hubspot_dealstage_name")
-        hs_pipeline_sql        = _col_or_null("hubspot_pipeline_id", "hubspot_pipeline_id")
+        # HubSpot stage mapping: Bronze has HubSpot_Pipeline_ID and HubSpot_Dealstage_ID
+        # Map these to canonical silver column names (pipeline/dealstage coexist with icalps_stage/icalps_dealstatus)
+        # Note: explicitly use AS alias since _col_or_null doesn't alias when column exists
+        hs_pipeline_sql        = "\"HubSpot_Pipeline_ID\" AS pipeline" if "HubSpot_Pipeline_ID" in opp_cols else "NULL AS pipeline"
+        hs_dealstage_sql       = "\"HubSpot_Dealstage_ID\" AS dealstage" if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS dealstage"
         company_language_sql   = _col_or_null("Company_Language", "company_language")
         company_phone_sql      = _col_or_null("Company_Phone", "icalps_companyphone")
         person_email_sql       = _col_or_null("Person_Email", "person_email")
