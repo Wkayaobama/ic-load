@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from context.config import PROJECT_ROOT
 from context.db import get_connection
 
 _LEGACY_ROOT = PROJECT_ROOT.parent / "ic_load_pipeline" / "python-ignorethis"
+
+# Native company normaliser — preferred over legacy
+_NATIVE_COMPANY_AVAILABLE = False
+try:
+    from pipeline.silver_company import SilverCompanyNormaliser as NativeCompanyNormaliser
+    _NATIVE_COMPANY_AVAILABLE = True
+except ImportError:
+    NativeCompanyNormaliser = None  # type: ignore
 
 # Path to the Case Silver SQL files (self-contained, no legacy dependency)
 _CASE_SQL_DIR = PROJECT_ROOT / "sql" / "case"
@@ -75,6 +86,31 @@ class SilverNormaliser:
             conn.commit()
 
         return {"entity": "case", "status": "materialised"}
+
+    def normalise_company(self) -> dict[str, Any]:
+        """Normalise company data using native module (preferred) or legacy fallback.
+
+        Native module:
+        - Uses context.algorithms.company_siblings for sibling detection
+        - Uses context.algorithms.phone_normalise for E.164 normalisation
+        - Writes to staging.stg_company_normalised
+
+        Falls back to legacy if native is unavailable or fails.
+        """
+        if _NATIVE_COMPANY_AVAILABLE and NativeCompanyNormaliser is not None:
+            try:
+                normaliser = NativeCompanyNormaliser()
+                result = normaliser.normalise()
+                return result
+            except Exception as e:
+                _log.warning(
+                    "Native company normaliser failed, falling back to legacy: %s", e
+                )
+
+        # Fallback to legacy
+        self._ensure_legacy()
+        self._legacy_delegate.normalise_company()
+        return {"entity": "company", "status": "legacy", "source": "fallback"}
 
     def run_all(self) -> None:
         """Delegate to legacy normaliser for all non-case entities."""

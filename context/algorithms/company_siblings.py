@@ -209,25 +209,40 @@ def select_canonical_parent(
     )
 
 
-def assign_sibling_indices(group: SiblingGroup) -> list[dict[str, Any]]:
+def _get_comp_id(row: pd.Series) -> Any:
+    """Extract company ID from a row, handling case variations."""
+    for col in ["comp_companyid", "Comp_CompanyId", "Company_Id", "company_id"]:
+        if col in row.index:
+            return row[col]
+    return None
+
+
+def assign_sibling_indices(group: SiblingGroup, id_col: str = "comp_companyid") -> list[dict[str, Any]]:
     """Return a list of dicts with icalps_sibling_index and synthetic_domain assigned.
 
     Row 0 = parent (sibling_index=0, domain=clean_domain)
     Rows 1..N = children sorted by comp_companyid ASC
+
+    Args:
+        group: The resolved SiblingGroup.
+        id_col: The column name for company ID (default: comp_companyid).
     """
     if group.unresolved:
         return []
     rows = []
+    # Try the specified id_col first, then fall back to case variations
+    parent_id = group.parent_row.get(id_col) or _get_comp_id(group.parent_row)
     rows.append({
-        "comp_companyid": group.parent_row.get("comp_companyid"),
+        "comp_companyid": parent_id,
         "icalps_sibling_index": 0,
         "icalps_real_domain": group.clean_domain,
         "synthetic_domain": group.clean_domain,
         "role": "parent",
     })
     for i, child in enumerate(group.children, start=1):
+        child_id = child.get(id_col) or _get_comp_id(child)
         rows.append({
-            "comp_companyid": child.get("comp_companyid"),
+            "comp_companyid": child_id,
             "icalps_sibling_index": i,
             "icalps_real_domain": group.clean_domain,
             "synthetic_domain": f"{i}.{group.clean_domain}",
