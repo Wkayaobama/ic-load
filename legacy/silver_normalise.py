@@ -277,22 +277,20 @@ class SilverNormaliser:
         self.con.execute(f"""
             CREATE OR REPLACE VIEW stg_company_normalised AS
             SELECT
-                Comp_CompanyId,
+                Comp_CompanyId AS icalps_company_id,
                 Comp_Name,
-                Comp_WebSite,
-                NULL AS Comp_Territory,  -- Column removed from bronze schema
-                Comp_Sector,
-                NULL AS Comp_Revenue,    -- Column removed from bronze schema
-                Comp_Employees,
+                Comp_WebSite                                  AS icalps_comp_website,
+                Comp_Sector                                   AS icalps_company_sector,
+                Comp_Employees                                AS icalps_comp_numemployees,
                 Comp_CreatedDate,
                 Comp_UpdatedDate,
-                Comp_Source,
+                Comp_Source                                   AS icalps_compsource,
                 Comp_CurrencyId,
 
                 -- Normalised enum fields
-                {comp_status_sql}  AS icalps_companystatus,
-                {comp_type_sql}    AS icalps_companytype,
-                {comp_lang_sql}    AS icalps_language,
+                {comp_status_sql}                             AS icalps_companystatus,
+                {comp_type_sql}                               AS icalps_companytype,
+                {comp_lang_sql}                               AS icalps_comp_language,
 
                 -- Address: street1 primary, concat full
                 Address_Street1                               AS icalps_street_address,
@@ -304,15 +302,15 @@ class SilverNormaliser:
                         NULLIF(Address_PostCode,''),
                         NULLIF(Address_Country,'')
                     ), 500
-                )                                             AS icalps_full_address,
-                Address_City,
-                Address_State,
-                Address_PostCode,
-                Address_Country                               AS icalps_country_raw,
+                )                                             AS icalps_companyaddress,
+                Address_City                                  AS icalps_addresscity,
+                Address_State                                 AS icalps_company_state,
+                Address_PostCode                              AS icalps_address_postcode,
+                Address_Country                               AS icalps_address_country,
                 {country_sql}                                 AS icalps_country,
 
                 -- Contact info
-                Company_Email                                 AS icalps_company_email,
+                Company_Email                                 AS icalps_companyemail,
                 {company_linkedin_sql}                        AS icalps_linkedin_url,
 
                 -- Owner raw (resolve to HubSpot owner ID in owner resolution step)
@@ -334,7 +332,7 @@ class SilverNormaliser:
             raw_phones = self.con.execute("SELECT Comp_CompanyId, Company_Phone FROM stg_company").df()
             raw_phones["icalps_companyphone"] = raw_phones["Company_Phone"].apply(_normalise_phone)
             phone_map: dict = raw_phones.set_index("Comp_CompanyId")["icalps_companyphone"].to_dict()
-            df["icalps_companyphone"] = df["Comp_CompanyId"].map(phone_map)  # type: ignore[arg-type]
+            df["icalps_companyphone"] = df["icalps_company_id"].map(phone_map)  # type: ignore[arg-type]
         else:
             df["icalps_companyphone"] = None
 
@@ -365,7 +363,7 @@ class SilverNormaliser:
                     for row_dict in assign_sibling_indices(group):
                         sibling_map[row_dict["comp_companyid"]] = row_dict["icalps_sibling_index"]
 
-                df["icalps_sibling_index"] = df["Comp_CompanyId"].map(sibling_map)
+                df["icalps_sibling_index"] = df["icalps_company_id"].map(sibling_map)
                 print(f"[silver_normalise] sibling index: {len(resolved_groups)} groups resolved, "
                       f"{sum(len(g.children) + 1 for g in resolved_groups)} companies indexed, "
                       f"{len(unresolved)} domains unresolved")
@@ -391,11 +389,18 @@ class SilverNormaliser:
         """Normalise staging.stg_contact -> staging.stg_contact_normalised."""
         _pg_to_duckdb(self.con, "staging.stg_contact")
 
-        contact_status_sql = self._case_expr("Pers_Status", CONTACT_STATUS_MAP, "Pers_Status")
-        country_sql        = self._case_expr("Address_Country", COUNTRY_ISO_MAP, "Address_Country")
+        # Introspect available columns — gracefully NULL-pad missing optional columns
+        contact_cols = {d[0] for d in self.con.execute("SELECT * FROM stg_contact LIMIT 0").description}
+
+        def _col_or_null(col: str, alias: str | None = None) -> str:
+            alias = alias or col
+            return f"{col}" if col in contact_cols else f"NULL AS {alias}"
+
+        contact_status_sql = self._case_expr("Pers_Status", CONTACT_STATUS_MAP, "Pers_Status") if "Pers_Status" in contact_cols else "NULL"
+        country_sql        = self._case_expr("Address_Country", COUNTRY_ISO_MAP, "Address_Country") if "Address_Country" in contact_cols else "NULL"
+        pers_lang_sql      = self._case_expr("Pers_Language", LANGUAGE_ISO_MAP, "NULL") if "Pers_Language" in contact_cols else "NULL"
 
         # LinkedIn_URL is optional — only present when MC_socialnetworks was joined at extraction.
-        contact_cols = {d[0] for d in self.con.execute("SELECT * FROM stg_contact LIMIT 0").description}
         if "LinkedIn_URL" in contact_cols:
             contact_linkedin_sql = """CASE
                     WHEN LinkedIn_URL LIKE '%linkedin.com/in/%' THEN LinkedIn_URL
@@ -409,53 +414,41 @@ class SilverNormaliser:
         self.con.execute(f"""
             CREATE OR REPLACE VIEW stg_contact_normalised_base AS
             SELECT
-                Pers_PersonId,
-                Pers_CompanyId,
-                Pers_FirstName,
-                Pers_LastName,
-                Pers_MiddleName,
-                Pers_Salutation,
-                Pers_Gender,
-                Pers_Suffix,
+                Pers_PersonId AS icalps_contact_id,
+                {_col_or_null("Pers_CompanyId", "icalps_company_id")},
+                {_col_or_null("Pers_FirstName")},
+                {_col_or_null("Pers_LastName")},
+                {_col_or_null("Pers_MiddleName")},
+                {_col_or_null("Pers_Salutation")},
+                {_col_or_null("Pers_Gender")},
+                {_col_or_null("Pers_Suffix")},
                 -- Title: strip HTML, truncate 150 chars
-                LEFT(
-                    REGEXP_REPLACE(COALESCE(Pers_Title,''), '<[^>]+>', '', 'g'),
-                    150
-                )                                             AS icalps_title,
-                Pers_Department,
-                {contact_status_sql}                          AS icalps_pers_status,
-                Pers_Source,
-                Pers_Territory,
-                Pers_WebSite,
-                Pers_CreatedDate,
-                Pers_UpdatedDate,
-                Pers_CreatedBy,
+                {"LEFT(REGEXP_REPLACE(COALESCE(Pers_Title,''), '<[^>]+>', '', 'g'), 150) AS icalps_perstitle" if "Pers_Title" in contact_cols else "NULL AS icalps_perstitle"},
+                {_col_or_null("Pers_Department", "icalps_department")},
+                {contact_status_sql}                          AS icalps_contactstatus,
+                {pers_lang_sql}                               AS icalps_language,
+                {_col_or_null("Pers_Source")},
+                {_col_or_null("Pers_Territory")},
+                {_col_or_null("Pers_WebSite")},
+                {_col_or_null("Pers_CreatedDate")},
+                {_col_or_null("Pers_UpdatedDate")},
+                {_col_or_null("Pers_CreatedBy")},
 
                 -- Company (denormalised)
-                Company_Name,
-                Company_WebSite,
-                Company_Type,
+                {_col_or_null("Company_Name")},
+                {_col_or_null("Company_WebSite")},
+                {_col_or_null("Company_Type")},
 
                 -- Email: validate format
-                CASE
-                    WHEN Person_Email LIKE '%@%' THEN Person_Email
-                    ELSE NULL
-                END                                           AS icalps_email,
+                {"CASE WHEN Person_Email LIKE '%@%' THEN Person_Email ELSE NULL END AS icalps_email" if "Person_Email" in contact_cols else "NULL AS icalps_email"},
 
                 -- Address
-                Address_Street1                               AS icalps_street_address,
-                LEFT(
-                    CONCAT_WS(', ',
-                        NULLIF(Address_Street1,''),
-                        NULLIF(Address_City,''),
-                        NULLIF(Address_PostCode,''),
-                        NULLIF(Address_Country,'')
-                    ), 500
-                )                                             AS icalps_full_address,
-                Address_City,
-                Address_State,
-                Address_PostCode,
-                {country_sql}                                 AS icalps_country,
+                {_col_or_null("Address_Street1", "icalps_street_address")},
+                {"LEFT(CONCAT_WS(', ', NULLIF(Address_Street1,''), NULLIF(Address_City,''), NULLIF(Address_PostCode,''), NULLIF(Address_Country,'')), 500) AS icalps_full_address" if "Address_Street1" in contact_cols else "NULL AS icalps_full_address"},
+                {_col_or_null("Address_City", "icalps_addresscity")},
+                {_col_or_null("Address_State")},
+                {_col_or_null("Address_PostCode")},
+                {country_sql}                                 AS icalps_address_country,
 
                 -- LinkedIn
                 {contact_linkedin_sql}                        AS icalps_linkedin_url,
@@ -471,9 +464,9 @@ class SilverNormaliser:
 
         df = self.con.execute("SELECT * FROM stg_contact_normalised_base").df()
 
-        # Phone normalisation
+        # Phone normalisation - join on icalps_contact_id
         raw = self.con.execute("""
-            SELECT Pers_PersonId,
+            SELECT Pers_PersonId AS icalps_contact_id,
                    Person_Phone_Business,
                    Person_Phone_Mobile
             FROM stg_contact
@@ -499,33 +492,37 @@ class SilverNormaliser:
             alias = alias or col
             return f"{col}" if col in opp_cols else f"NULL AS {alias}"
 
-        oppo_category_sql      = _col_or_null("Oppo_Category")
-        oppo_notes_sql         = _col_or_null("Oppo_Notes")
-        oppo_deleted_sql       = _col_or_null("Oppo_Deleted")
+        oppo_category_sql      = _col_or_null("Oppo_Category", "oppo_category")
+        oppo_notes_sql         = _col_or_null("Oppo_Notes", "icalps_dealnotes")
+        oppo_deleted_sql       = _col_or_null("Oppo_Deleted", "oppo_deleted")
         oppo_opened_date_sql   = "TRY_CAST(Oppo_OpenedDate AS DATE)" if "Oppo_OpenedDate" in opp_cols else "TRY_CAST(Oppo_Opened AS DATE)" if "Oppo_Opened" in opp_cols else "NULL"
-        hs_dealstage_sql       = _col_or_null("hubspot_dealstage_name")
-        hs_pipeline_sql        = _col_or_null("hubspot_pipeline_id")
-        company_language_sql   = _col_or_null("Company_Language")
-        person_email_sql       = _col_or_null("Person_Email")
-        user_fullname_sql      = _col_or_null("User_FullName")
-        user_email_sql         = _col_or_null("User_Email")
+        # Effective close date: actual close (when deal was won/lost), fallback to target close
+        oppo_actual_close_sql  = _col_or_null("Oppo_ActualClose", "icalps_effectiveclosedate")
+        oppo_closed_sql        = _col_or_null("Oppo_Closed", "oppo_closed")
+        hs_dealstage_sql       = _col_or_null("hubspot_dealstage_name", "hubspot_dealstage_name")
+        hs_pipeline_sql        = _col_or_null("hubspot_pipeline_id", "hubspot_pipeline_id")
+        company_language_sql   = _col_or_null("Company_Language", "company_language")
+        company_phone_sql      = _col_or_null("Company_Phone", "icalps_companyphone")
+        person_email_sql       = _col_or_null("Person_Email", "person_email")
+        user_fullname_sql      = _col_or_null("User_FullName", "user_fullname")
+        user_email_sql         = _col_or_null("User_Email", "user_email")
 
         self.con.execute(f"""
             CREATE OR REPLACE VIEW stg_opportunity_normalised_base AS
             SELECT
-                Oppo_OpportunityId,
-                Oppo_Description,
-                Oppo_Type,
+                Oppo_OpportunityId AS icalps_deal_id,
+                Oppo_Description AS oppo_description,
+                Oppo_Type AS icalps_dealtype,
                 {oppo_category_sql},
-                Oppo_Stage,
-                Oppo_Status,
-                Oppo_AssignedUserId,
+                Oppo_Stage AS icalps_stage,
+                Oppo_Status AS icalps_dealstatus,
+                Oppo_AssignedUserId AS oppo_assigneduserid,
                 {oppo_notes_sql},
                 {oppo_deleted_sql},
-                Oppo_PrimaryCompanyId,
-                Oppo_PrimaryPersonId,
-                Oppo_CreatedDate,
-                Oppo_UpdatedDate,
+                Oppo_PrimaryCompanyId AS icalps_company_id,
+                Oppo_PrimaryPersonId AS icalps_contact_id,
+                Oppo_CreatedDate AS oppo_createddate,
+                Oppo_UpdatedDate AS oppo_updateddate,
 
                 -- Close date: normalise to DATE (strip time component)
                 TRY_CAST(
@@ -537,6 +534,24 @@ class SilverNormaliser:
                 AS DATE)                                      AS icalps_closedate,
 
                 {oppo_opened_date_sql}                        AS icalps_opendate,
+
+                -- Effective close date (actual close when deal won/lost)
+                COALESCE(
+                    TRY_CAST(
+                        CASE
+                            WHEN {oppo_actual_close_sql.split(' AS ')[0] if ' AS ' in oppo_actual_close_sql else 'NULL'} LIKE '%T%'
+                                THEN SPLIT_PART({oppo_actual_close_sql.split(' AS ')[0] if ' AS ' in oppo_actual_close_sql else 'NULL'}, 'T', 1)
+                            ELSE {oppo_actual_close_sql.split(' AS ')[0] if ' AS ' in oppo_actual_close_sql else 'NULL'}
+                        END
+                    AS DATE),
+                    TRY_CAST(
+                        CASE
+                            WHEN {oppo_closed_sql.split(' AS ')[0] if ' AS ' in oppo_closed_sql else 'NULL'} LIKE '%T%'
+                                THEN SPLIT_PART({oppo_closed_sql.split(' AS ')[0] if ' AS ' in oppo_closed_sql else 'NULL'}, 'T', 1)
+                            ELSE {oppo_closed_sql.split(' AS ')[0] if ' AS ' in oppo_closed_sql else 'NULL'}
+                        END
+                    AS DATE)
+                )                                             AS icalps_effectiveclosedate,
 
                 -- Cost: strip currency symbol, normalise decimal
                 TRY_CAST(
@@ -551,7 +566,7 @@ class SilverNormaliser:
 
                 -- Forecast (k€ assumed — validated in validate_silver.py)
                 TRY_CAST(Oppo_Forecast AS DOUBLE)             AS icalps_forecast,
-                TRY_CAST(Oppo_Certainty AS DOUBLE)            AS icalps_certainty,
+                TRY_CAST(Oppo_Certainty AS DOUBLE)            AS icalps_dealcertainty,
 
                 -- Computed columns (replicate HubSpot custom properties)
                 TRY_CAST(Oppo_Forecast AS DOUBLE)
@@ -578,8 +593,9 @@ class SilverNormaliser:
                 {hs_pipeline_sql},
 
                 -- Denormalised
-                Company_Name, {company_language_sql},
-                Person_FirstName, Person_LastName, {person_email_sql},
+                Company_Name AS company_name, {company_language_sql},
+                {company_phone_sql},
+                Person_FirstName AS person_firstname, Person_LastName AS person_lastname, {person_email_sql},
                 {user_fullname_sql}, {user_email_sql},
 
                 -- Load-status watermark (set by bronze_loader, carried through unchanged)
@@ -602,7 +618,7 @@ class SilverNormaliser:
         df = self.con.execute("SELECT * FROM stg_opportunity_deduped").df()
 
         # Add cc_net_weighted
-        df["cc_net_weighted"] = df["cc_net"] * df["icalps_certainty"] / 100.0
+        df["cc_net_weighted"] = df["cc_net"] * df["icalps_dealcertainty"] / 100.0
 
         self.con.register("stg_opportunity_normalised_df", df)
         return _duckdb_to_pg(self.con, "stg_opportunity_normalised_df", "staging.stg_opportunity_normalised")
