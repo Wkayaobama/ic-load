@@ -74,7 +74,9 @@ def select_body_entity(entity: str, schema: dict[str, Any] | None = None, run: d
             stg.owner_firstname AS icalps_owner_firstname,
             stg.owner_lastname AS icalps_owner_lastname,
             stg.createdate::timestamp AS createdate,
-            stg.lastmodifieddate::timestamp AS lastmodifieddate
+            stg.lastmodifieddate::timestamp AS lastmodifieddate,
+            stg.icalps_canonical_domain,
+            stg.icalps_sibling_index
         FROM {cfg['silver_table']} AS stg
         WHERE stg.{cfg['upsert']['load_status_column']} IN ('NEW', 'MODIFIED')
         """
