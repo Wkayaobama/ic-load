@@ -393,8 +393,9 @@ class SilverNormaliser:
         contact_cols = {d[0] for d in self.con.execute("SELECT * FROM stg_contact LIMIT 0").description}
 
         def _col_or_null(col: str, alias: str | None = None) -> str:
+            """Return 'col AS alias' if col exists, else 'NULL AS alias'."""
             alias = alias or col
-            return f"{col}" if col in contact_cols else f"NULL AS {alias}"
+            return f"{col} AS {alias}" if col in contact_cols else f"NULL AS {alias}"
 
         contact_status_sql = self._case_expr("Pers_Status", CONTACT_STATUS_MAP, "Pers_Status") if "Pers_Status" in contact_cols else "NULL"
         country_sql        = self._case_expr("Address_Country", COUNTRY_ISO_MAP, "Address_Country") if "Address_Country" in contact_cols else "NULL"
@@ -489,8 +490,9 @@ class SilverNormaliser:
         opp_cols = {d[0] for d in self.con.execute("SELECT * FROM stg_opportunity LIMIT 0").description}
 
         def _col_or_null(col: str, alias: str | None = None) -> str:
+            """Return 'col AS alias' if col exists, else 'NULL AS alias'."""
             alias = alias or col
-            return f"{col}" if col in opp_cols else f"NULL AS {alias}"
+            return f"{col} AS {alias}" if col in opp_cols else f"NULL AS {alias}"
 
         oppo_category_sql      = _col_or_null("Oppo_Category", "oppo_category")
         oppo_notes_sql         = _col_or_null("Oppo_Notes", "icalps_dealnotes")
