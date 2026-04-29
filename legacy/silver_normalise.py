@@ -274,6 +274,8 @@ class SilverNormaliser:
         else:
             company_linkedin_sql = "NULL"
 
+        comp_deleted_sql = "Comp_Deleted" if "Comp_Deleted" in company_cols else "NULL"
+
         self.con.execute(f"""
             CREATE OR REPLACE VIEW stg_company_normalised AS
             SELECT
@@ -316,6 +318,9 @@ class SilverNormaliser:
                 -- Owner raw (resolve to HubSpot owner ID in owner resolution step)
                 Owner_Email                                   AS icalps_ownerid_raw,
                 Owner_FirstName, Owner_LastName,
+
+                -- Soft-delete flag (carried through unchanged)
+                {comp_deleted_sql}                            AS comp_deleted,
 
                 -- Load-status watermark (set by bronze_loader, carried through unchanged)
                 _load_status,
@@ -434,6 +439,9 @@ class SilverNormaliser:
                 {_col_or_null("Pers_CreatedDate")},
                 {_col_or_null("Pers_UpdatedDate")},
                 {_col_or_null("Pers_CreatedBy")},
+
+                -- Soft-delete flag (carried through unchanged)
+                {_col_or_null("Pers_Deleted", "pers_deleted")},
 
                 -- Company (denormalised)
                 {_col_or_null("Company_Name")},
@@ -665,6 +673,8 @@ class SilverNormaliser:
                 Company_Id,
                 Comm_OpportunityId,
                 Comm_CaseId,
+                -- Soft-delete flag (carried through unchanged)
+                {_c('Comm_Deleted')},
                 -- Denormalised (may be absent from older Bronze extracts)
                 {_c('Person_Email')},
                 {_c('Person_Name')},
@@ -672,7 +682,7 @@ class SilverNormaliser:
                 {_c('Comp_Name')},
                 {_c('Comp_WebSite')},
                 -- Owner email from denormalised Companies join (used for parent tiebreaker)
-                {_c('"Companies.Owner_Email"')} AS icalps_owner_email,
+                {"\"Companies.Owner_Email\"" if '"Companies.Owner_Email"' in comm_cols else "NULL"} AS icalps_owner_email,
 
                 -- Load-status watermark (set by bronze_loader, carried through unchanged)
                 _load_status,
