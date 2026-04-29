@@ -585,23 +585,9 @@ class SilverNormaliser:
                     )
                 AS DOUBLE)                                    AS icalps_cost,
 
-                -- Forecast (k€ assumed — validated in validate_silver.py)
-                TRY_CAST(Oppo_Forecast AS DOUBLE)             AS icalps_forecast,
+                -- Forecast: source is in absolute euros, normalise to k€
+                TRY_CAST(Oppo_Forecast AS DOUBLE) / 1000.0   AS icalps_forecast,
                 TRY_CAST(Oppo_Certainty AS DOUBLE)            AS icalps_dealcertainty,
-
-                -- Computed columns (replicate HubSpot custom properties)
-                TRY_CAST(Oppo_Forecast AS DOUBLE)
-                    * TRY_CAST(Oppo_Certainty AS DOUBLE) / 100.0
-                                                              AS cc_weighted,
-                TRY_CAST(Oppo_Forecast AS DOUBLE)
-                    - COALESCE(TRY_CAST(
-                        REPLACE(
-                            REPLACE(
-                                REGEXP_REPLACE(COALESCE(Oppo_Cost::VARCHAR,''), '[€$£ ]', '', 'g'),
-                                ',', '.'
-                            ), ' ', ''
-                        )
-                    AS DOUBLE), 0.0)                          AS cc_net,
 
                 -- Deduplication rank (keep latest by UpdatedDate)
                 ROW_NUMBER() OVER (
@@ -637,9 +623,6 @@ class SilverNormaliser:
         """)
 
         df = self.con.execute("SELECT * FROM stg_opportunity_deduped").df()
-
-        # Add cc_net_weighted
-        df["cc_net_weighted"] = df["cc_net"] * df["icalps_dealcertainty"] / 100.0
 
         self.con.register("stg_opportunity_normalised_df", df)
         return _duckdb_to_pg(self.con, "stg_opportunity_normalised_df", "staging.stg_opportunity_normalised")
