@@ -514,7 +514,12 @@ class SilverNormaliser:
         # Note: explicitly use AS alias since _col_or_null doesn't alias when column exists
         hs_pipeline_sql        = "COALESCE(\"HubSpot_Pipeline_ID\", '766126206') AS pipeline" if "HubSpot_Pipeline_ID" in opp_cols else "'766126206' AS pipeline"
         hs_dealstage_sql       = "\"HubSpot_Dealstage_ID\" AS dealstage" if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS dealstage"
-        company_language_sql   = _col_or_null("Company_Language", "company_language")
+        company_language_sql   = (
+            "CASE CAST(Company_Language AS VARCHAR)"
+            " WHEN '0' THEN 'French'"
+            " WHEN '1' THEN 'Foreign'"
+            " ELSE NULL END AS company_language"
+        ) if "Company_Language" in opp_cols else "NULL AS company_language"
         company_phone_sql      = _col_or_null("Company_Phone", "icalps_companyphone")
         person_email_sql       = _col_or_null("Person_Email", "person_email")
         user_fullname_sql      = _col_or_null("User_FullName", "user_fullname")
