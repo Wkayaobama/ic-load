@@ -512,7 +512,7 @@ class SilverNormaliser:
         # HubSpot stage mapping: Bronze has HubSpot_Pipeline_ID and HubSpot_Dealstage_ID
         # Map these to canonical silver column names (pipeline/dealstage coexist with icalps_stage/icalps_dealstatus)
         # Note: explicitly use AS alias since _col_or_null doesn't alias when column exists
-        hs_pipeline_sql        = "\"HubSpot_Pipeline_ID\" AS pipeline" if "HubSpot_Pipeline_ID" in opp_cols else "NULL AS pipeline"
+        hs_pipeline_sql        = "COALESCE(\"HubSpot_Pipeline_ID\", '766126206') AS pipeline" if "HubSpot_Pipeline_ID" in opp_cols else "'766126206' AS pipeline"
         hs_dealstage_sql       = "\"HubSpot_Dealstage_ID\" AS dealstage" if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS dealstage"
         company_language_sql   = _col_or_null("Company_Language", "company_language")
         company_phone_sql      = _col_or_null("Company_Phone", "icalps_companyphone")
