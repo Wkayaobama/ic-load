@@ -693,6 +693,20 @@ class SilverNormaliser:
         """)
 
         df = self.con.execute("SELECT * FROM stg_communication_normalised_view").df()
+
+        # Strip HTML from Comm_Email using bs4 (values are sometimes raw HTML bodies)
+        try:
+            from bs4 import BeautifulSoup
+
+            def _strip_html(val):
+                if not val or not isinstance(val, str):
+                    return val
+                return BeautifulSoup(val, "html.parser").get_text(separator=" ", strip=True) or None
+
+            df["Comm_Email"] = df["Comm_Email"].apply(_strip_html)
+        except ImportError:
+            print("[silver_normalise] WARNING: beautifulsoup4 not installed — Comm_Email HTML not stripped")
+
         self.con.register("stg_communication_normalised_df", df)
         return _duckdb_to_pg(self.con, "stg_communication_normalised_df", "staging.stg_communication_normalised")
 
