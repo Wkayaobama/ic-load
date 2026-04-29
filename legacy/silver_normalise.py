@@ -506,6 +506,11 @@ class SilverNormaliser:
         oppo_notes_sql         = _col_or_null("Oppo_Note", "icalps_dealnotes")
         oppo_deleted_sql       = _col_or_null("Oppo_Deleted", "oppo_deleted")
         oppo_opened_date_sql   = "TRY_CAST(Oppo_OpenedDate AS DATE)" if "Oppo_OpenedDate" in opp_cols else "TRY_CAST(Oppo_Opened AS DATE)" if "Oppo_Opened" in opp_cols else "NULL"
+        oppo_targetclose_sql   = (
+            "TRY_CAST(CASE WHEN Oppo_TargetCloseDate LIKE '%T%'"
+            " THEN SPLIT_PART(Oppo_TargetCloseDate, 'T', 1)"
+            " ELSE Oppo_TargetCloseDate END AS DATE)"
+        ) if "Oppo_TargetCloseDate" in opp_cols else "NULL"
         # Effective close date: actual close (when deal was won/lost), fallback to target close
         oppo_actual_close_sql  = _col_or_null("Oppo_ActualClose", "icalps_effectiveclosedate")
         oppo_closed_sql        = _col_or_null("Oppo_Closed", "oppo_closed")
@@ -555,6 +560,7 @@ class SilverNormaliser:
                 AS DATE)                                      AS icalps_closedate,
 
                 {oppo_opened_date_sql}                        AS icalps_opendate,
+                {oppo_targetclose_sql}                        AS icalps_targetclose,
 
                 -- Effective close date (actual close when deal won/lost)
                 COALESCE(
