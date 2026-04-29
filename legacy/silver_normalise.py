@@ -82,6 +82,57 @@ LANGUAGE_ISO_MAP = {
     "Italiano": "IT",
 }
 
+ISO_TO_FULL_COUNTRY_MAP = {
+    "FR": "France",
+    "CH": "Switzerland",
+    "DE": "Germany",
+    "IT": "Italy",
+    "BE": "Belgium",
+    "NL": "Netherlands",
+    "SE": "Sweden",
+    "US": "United States",
+    "NO": "Norway",
+    "FI": "Finland",
+    "AT": "Austria",
+    "ES": "Spain",
+    "IL": "Israel",
+    "UK": "United Kingdom",
+    "GB": "United Kingdom",
+    "GR": "Greece",
+    "DK": "Denmark",
+    "IE": "Ireland",
+    "IN": "India",
+    "PL": "Poland",
+    "CA": "Canada",
+    "PT": "Portugal",
+    "TR": "Turkey",
+    "LU": "Luxembourg",
+    "CZ": "Czech Republic",
+    "CN": "China",
+    "SG": "Singapore",
+    "KR": "South Korea",
+    "AU": "Australia",
+    "EG": "Egypt",
+    "BR": "Brazil",
+    "RU": "Russia",
+    "HK": "Hong Kong",
+    "TW": "Taiwan",
+    "UA": "Ukraine",
+    "SA": "Saudi Arabia",
+    "TN": "Tunisia",
+    "LI": "Liechtenstein",
+    "SI": "Slovenia",
+    "ZA": "South Africa",
+    "AE": "United Arab Emirates",
+    "JP": "Japan",
+    "VN": "Vietnam",
+    "LV": "Latvia",
+    "LT": "Lithuania",
+    "RO": "Romania",
+    "MX": "Mexico",
+    "UY": "Uruguay",
+}
+
 COUNTRY_ISO_MAP = {
     "France":        "FR",
     "Allemagne":     "DE",
@@ -402,9 +453,10 @@ class SilverNormaliser:
             alias = alias or col
             return f"{col} AS {alias}" if col in contact_cols else f"NULL AS {alias}"
 
-        contact_status_sql = self._case_expr("Pers_Status", CONTACT_STATUS_MAP, "Pers_Status") if "Pers_Status" in contact_cols else "NULL"
-        country_sql        = self._case_expr("Address_Country", COUNTRY_ISO_MAP, "Address_Country") if "Address_Country" in contact_cols else "NULL"
-        pers_lang_sql      = self._case_expr("Pers_Language", LANGUAGE_ISO_MAP, "NULL") if "Pers_Language" in contact_cols else "NULL"
+        contact_status_sql   = self._case_expr("Pers_Status", CONTACT_STATUS_MAP, "Pers_Status") if "Pers_Status" in contact_cols else "NULL"
+        country_sql          = self._case_expr("Address_Country", COUNTRY_ISO_MAP, "Address_Country") if "Address_Country" in contact_cols else "NULL"
+        pers_lang_sql        = self._case_expr("Pers_Language", LANGUAGE_ISO_MAP, "NULL") if "Pers_Language" in contact_cols else "NULL"
+        full_country_sql     = self._case_expr(f"({country_sql})", ISO_TO_FULL_COUNTRY_MAP, "NULL") if "Address_Country" in contact_cols else "NULL"
 
         # LinkedIn_URL is optional — only present when MC_socialnetworks was joined at extraction.
         if "LinkedIn_URL" in contact_cols:
@@ -458,6 +510,7 @@ class SilverNormaliser:
                 {_col_or_null("Address_State")},
                 {_col_or_null("Address_PostCode")},
                 {country_sql}                                 AS icalps_address_country,
+                {full_country_sql}                            AS icalps_full_country,
 
                 -- LinkedIn
                 {contact_linkedin_sql}                        AS icalps_linkedin_url,
