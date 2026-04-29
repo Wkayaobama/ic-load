@@ -160,6 +160,29 @@ COUNTRY_ISO_MAP = {
     "Chine":         "CN",
     "Israel":        "IL",
     "Singapour":     "SG",
+    # Lowercase variants (source data quality)
+    "france":        "FR",
+    "allemagne":     "DE",
+    "suisse":        "CH",
+    "royaume-uni":   "GB",
+    "belgique":      "BE",
+    "italie":        "IT",
+    "espagne":       "ES",
+    "pays-bas":      "NL",
+    "autriche":      "AT",
+    "danemark":      "DK",
+    "finlande":      "FI",
+    "luxembourg":    "LU",
+    "portugal":      "PT",
+    "irlande":       "IE",
+    "pologne":       "PL",
+    "canada":        "CA",
+    "japon":         "JP",
+    "chine":         "CN",
+    "israel":        "IL",
+    "singapour":     "SG",
+    # Non-standard codes
+    "UK":            "GB",
 }
 
 
@@ -313,6 +336,8 @@ class SilverNormaliser:
         comp_type_sql    = self._case_expr("Comp_Type",    COMPANY_TYPE_MAP,    "Comp_Type")
         comp_lang_sql    = self._case_expr("Comp_Language", LANGUAGE_ISO_MAP,   "NULL")
         country_sql      = self._case_expr("Address_Country", COUNTRY_ISO_MAP,  "Address_Country")
+        icalps_country_expr = f"CASE WHEN LENGTH({country_sql}) = 2 THEN UPPER({country_sql}) ELSE NULL END"
+        full_country_sql = self._case_expr(f"({icalps_country_expr})", ISO_TO_FULL_COUNTRY_MAP, "NULL")
 
         # LinkedIn_URL is only present when MC_socialnetworks view was joined at extraction.
         # Gracefully default to NULL when the column is absent from this Bronze extract.
@@ -360,7 +385,11 @@ class SilverNormaliser:
                 Address_State                                 AS icalps_company_state,
                 Address_PostCode                              AS icalps_address_postcode,
                 Address_Country                               AS icalps_address_country,
-                {country_sql}                                 AS icalps_country,
+                CASE WHEN LENGTH({country_sql}) = 2
+                     THEN UPPER({country_sql})
+                     ELSE NULL
+                END                                           AS icalps_country,
+                {full_country_sql}                            AS icalps_full_country,
 
                 -- Contact info
                 Company_Email                                 AS icalps_companyemail,
