@@ -503,7 +503,7 @@ class SilverNormaliser:
             return f"{col} AS {alias}" if col in opp_cols else f"NULL AS {alias}"
 
         oppo_category_sql      = _col_or_null("Oppo_Category", "oppo_category")
-        oppo_notes_sql         = _col_or_null("Oppo_Notes", "icalps_dealnotes")
+        oppo_notes_sql         = _col_or_null("Oppo_Note", "icalps_dealnotes")
         oppo_deleted_sql       = _col_or_null("Oppo_Deleted", "oppo_deleted")
         oppo_opened_date_sql   = "TRY_CAST(Oppo_OpenedDate AS DATE)" if "Oppo_OpenedDate" in opp_cols else "TRY_CAST(Oppo_Opened AS DATE)" if "Oppo_Opened" in opp_cols else "NULL"
         # Effective close date: actual close (when deal was won/lost), fallback to target close
