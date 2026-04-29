@@ -525,7 +525,10 @@ class SilverNormaliser:
             SELECT
                 Oppo_OpportunityId AS icalps_deal_id,
                 Oppo_Description AS oppo_description,
-                Oppo_Type AS icalps_dealtype,
+                CASE Oppo_Type
+                    WHEN 'Desogn_Service' THEN 'Design_Service'
+                    ELSE Oppo_Type
+                END                                           AS icalps_dealtype,
                 {oppo_category_sql},
                 Oppo_Stage AS icalps_stage,
                 Oppo_Status AS icalps_dealstatus,
