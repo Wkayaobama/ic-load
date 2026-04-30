@@ -345,6 +345,15 @@ class SilverNormaliser:
         if "LinkedIn_URL" in company_cols:
             company_linkedin_sql = """CASE
                     WHEN LinkedIn_URL LIKE '%linkedin.com%' THEN LinkedIn_URL
+                    WHEN LinkedIn_URL LIKE 'in/%'
+                        OR LinkedIn_URL LIKE 'company/%'
+                        OR LinkedIn_URL LIKE 'pub/%'
+                        OR LinkedIn_URL LIKE 'search/%'
+                        OR LinkedIn_URL LIKE 'feed/%'
+                        OR LinkedIn_URL LIKE 'showcase/%'
+                        THEN 'https://www.linkedin.com/' || LinkedIn_URL
+                    WHEN LinkedIn_URL LIKE '/in/%'
+                        THEN 'https://www.linkedin.com' || LinkedIn_URL
                     ELSE NULL
                 END"""
         else:
@@ -490,7 +499,14 @@ class SilverNormaliser:
         # LinkedIn_URL is optional — only present when MC_socialnetworks was joined at extraction.
         if "LinkedIn_URL" in contact_cols:
             contact_linkedin_sql = """CASE
-                    WHEN LinkedIn_URL LIKE '%linkedin.com/in/%' THEN LinkedIn_URL
+                    WHEN LinkedIn_URL LIKE '%linkedin.com%' THEN LinkedIn_URL
+                    WHEN LinkedIn_URL LIKE 'in/%'
+                        OR LinkedIn_URL LIKE 'company/%'
+                        OR LinkedIn_URL LIKE 'pub/%'
+                        OR LinkedIn_URL LIKE 'search/%'
+                        OR LinkedIn_URL LIKE 'feed/%'
+                        OR LinkedIn_URL LIKE 'showcase/%'
+                        THEN 'https://www.linkedin.com/' || LinkedIn_URL
                     WHEN LinkedIn_URL LIKE '/in/%'
                         THEN 'https://www.linkedin.com' || LinkedIn_URL
                     ELSE NULL
