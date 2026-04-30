@@ -461,7 +461,7 @@ class SilverNormaliser:
         # ── Canonical domain & sibling index ────────────────────────────────
         # 1. Apply clean_domain() to ALL companies (not just siblings)
         if _SIBLING_ALGORITHMS_AVAILABLE:
-            df["icalps_canonical_domain"] = df["Comp_WebSite"].apply(clean_domain) if "Comp_WebSite" in df.columns else None
+            df["icalps_canonical_domain"] = df["icalps_comp_website"].apply(clean_domain) if "icalps_comp_website" in df.columns else None
 
             # 2. Sibling index: only for plural-domain groups with Gold matches
             try:
