@@ -448,6 +448,8 @@ class SilverNormaliser:
 
         # Phone normalisation via pandas (E.164 regex not trivial in DuckDB)
         df = self.con.execute("SELECT * FROM stg_company_normalised").df()
+        df["icalps_owner_email"]    = df["icalps_owner_email"].replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
+        df["icalps_owner_fullname"] = df["icalps_owner_fullname"].replace(r'^\s*$', pd.NA, regex=True).fillna("Thierry VILLARD")
         if "Company_Phone" in self.con.execute("SELECT * FROM stg_company LIMIT 0").df().columns:
             raw_phones = self.con.execute("SELECT Comp_CompanyId, Company_Phone FROM stg_company").df()
             raw_phones["icalps_companyphone"] = raw_phones["Company_Phone"].apply(_normalise_phone)
@@ -606,6 +608,8 @@ class SilverNormaliser:
         """)
 
         df = self.con.execute("SELECT * FROM stg_contact_normalised_base").df()
+        df["icalps_owner_email"]    = df["icalps_owner_email"].replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
+        df["icalps_owner_fullname"] = df["icalps_owner_fullname"].replace(r'^\s*$', pd.NA, regex=True).fillna("Thierry VILLARD")
 
         # Phone normalisation - join on icalps_contact_id
         raw = self.con.execute("""
@@ -763,6 +767,8 @@ class SilverNormaliser:
         """)
 
         df = self.con.execute("SELECT * FROM stg_opportunity_deduped").df()
+        df["icalps_owner_email"]    = df["icalps_owner_email"].replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
+        df["icalps_owner_fullname"] = df["icalps_owner_fullname"].replace(r'^\s*$', pd.NA, regex=True).fillna("Thierry VILLARD")
 
         # Phone normalisation (E.164) — same logic as stg_company_normalised
         if "icalps_companyphone" in df.columns:
