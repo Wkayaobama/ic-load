@@ -334,7 +334,12 @@ class SilverNormaliser:
         # Apply Python-side maps as DuckDB CASE expressions via SQL
         comp_status_sql  = self._case_expr("Comp_Status",  COMPANY_STATUS_MAP,  "Comp_Status")
         comp_type_sql    = self._case_expr("Comp_Type",    COMPANY_TYPE_MAP,    "Comp_Type")
-        comp_lang_sql    = self._case_expr("Comp_Language", LANGUAGE_ISO_MAP,   "NULL")
+        comp_lang_sql    = (
+            "CASE CAST(Comp_Language AS VARCHAR)"
+            " WHEN '0' THEN 'French'"
+            " WHEN '1' THEN 'Foreign'"
+            " ELSE NULL END"
+        )
         country_sql      = self._case_expr("Address_Country", COUNTRY_ISO_MAP,  "Address_Country")
         icalps_country_expr = f"CASE WHEN LENGTH({country_sql}) = 2 THEN UPPER({country_sql}) ELSE NULL END"
         full_country_sql = self._case_expr(f"({icalps_country_expr})", ISO_TO_FULL_COUNTRY_MAP, "NULL")
