@@ -221,14 +221,14 @@ def _fetch_gold_companies() -> pd.DataFrame:
     """
     with get_connection() as pg_conn:
         try:
-            return pd.read_sql("""
+            return _pg_query_df(pg_conn, """
                 SELECT
                     icalps_company_id::text AS icalps_company_id,
                     id AS hubspot_id,
                     COALESCE(num_associated_contacts, 0) AS contact_count
                 FROM hubspot.companies
                 WHERE icalps_company_id IS NOT NULL
-            """, pg_conn)
+            """)
         except Exception as e:
             print(f"[silver_normalise] WARNING: could not fetch gold companies — {e}")
             return pd.DataFrame(columns=["icalps_company_id", "hubspot_id", "contact_count"])
@@ -238,6 +238,15 @@ def _fetch_gold_companies() -> pd.DataFrame:
 # Core helper: read table from PostgreSQL -> pandas -> DuckDB
 # ---------------------------------------------------------------------------
 
+def _pg_query_df(pg_conn, sql: str) -> pd.DataFrame:
+    """Execute a query against a psycopg2 connection and return a DataFrame."""
+    with pg_conn.cursor() as cur:
+        cur.execute(sql)
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+    return pd.DataFrame(rows, columns=cols)
+
+
 def _pg_to_duckdb(con: duckdb.DuckDBPyConnection, table: str) -> int:
     """
     Load a PostgreSQL staging table into DuckDB in-memory.
@@ -245,7 +254,7 @@ def _pg_to_duckdb(con: duckdb.DuckDBPyConnection, table: str) -> int:
     Returns the row count.
     """
     with get_connection() as pg_conn:
-        df = pd.read_sql(f'SELECT * FROM {table}', pg_conn)
+        df = _pg_query_df(pg_conn, f'SELECT * FROM {table}')
     table_name = table.replace(".", "_").replace("staging_", "")
     # Convert pandas StringDtype columns to object for DuckDB compatibility
     # pandas 2.x uses StringDtype which DuckDB doesn't recognize
@@ -847,7 +856,7 @@ class SilverNormaliser:
         Used by upsert scripts to populate icalps_ownerid.
         """
         with get_connection() as pg_conn:
-            df = pd.read_sql("""
+            df = _pg_query_df(pg_conn, """
                 SELECT
                     email         AS owner_email,
                     id            AS hubspot_owner_id,
@@ -856,7 +865,7 @@ class SilverNormaliser:
                     archived
                 FROM hubspot.owners
                 WHERE archived IS DISTINCT FROM true
-            """, pg_conn)
+            """)
 
         if df.empty:
             print("[silver_normalise] WARNING: hubspot.owners returned 0 rows — skipping owner resolution")
