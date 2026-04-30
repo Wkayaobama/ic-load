@@ -366,6 +366,15 @@ class SilverNormaliser:
 
         comp_deleted_sql = "Comp_Deleted" if "Comp_Deleted" in company_cols else "NULL"
 
+        has_primary_first = "Comp_PrimaryPersonFirstName" in company_cols
+        has_primary_last  = "Comp_PrimaryPersonLastName" in company_cols
+        if has_primary_first or has_primary_last:
+            first = "NULLIF(Comp_PrimaryPersonFirstName, '')" if has_primary_first else "NULL"
+            last  = "NULLIF(Comp_PrimaryPersonLastName, '')"  if has_primary_last  else "NULL"
+            primary_contact_sql = f"NULLIF(CONCAT_WS(' ', {first}, {last}), '')"
+        else:
+            primary_contact_sql = "NULL"
+
         self.con.execute(f"""
             CREATE OR REPLACE VIEW stg_company_normalised AS
             SELECT
@@ -408,6 +417,9 @@ class SilverNormaliser:
                 -- Contact info
                 Company_Email                                 AS icalps_companyemail,
                 {company_linkedin_sql}                        AS icalps_linkedin_url,
+
+                -- Primary contact name (first + last concatenated)
+                {primary_contact_sql}                         AS icalps_companyprimarycontact,
 
                 -- Owner raw (resolve to HubSpot owner ID in owner resolution step)
                 Owner_Email                                   AS icalps_ownerid_raw,
