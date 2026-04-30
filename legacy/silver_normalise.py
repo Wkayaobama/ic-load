@@ -739,6 +739,10 @@ class SilverNormaliser:
 
         df = self.con.execute("SELECT * FROM stg_opportunity_deduped").df()
 
+        # Phone normalisation (E.164) — same logic as stg_company_normalised
+        if "icalps_companyphone" in df.columns:
+            df["icalps_companyphone"] = df["icalps_companyphone"].apply(_normalise_phone)
+
         self.con.register("stg_opportunity_normalised_df", df)
         return _duckdb_to_pg(self.con, "stg_opportunity_normalised_df", "staging.stg_opportunity_normalised")
 
