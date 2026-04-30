@@ -494,6 +494,12 @@ class SilverNormaliser:
         contact_status_sql   = self._case_expr("Pers_Status", CONTACT_STATUS_MAP, "Pers_Status") if "Pers_Status" in contact_cols else "NULL"
         country_sql          = self._case_expr("Address_Country", COUNTRY_ISO_MAP, "Address_Country") if "Address_Country" in contact_cols else "NULL"
         pers_lang_sql        = self._case_expr("Pers_Language", LANGUAGE_ISO_MAP, "NULL") if "Pers_Language" in contact_cols else "NULL"
+        company_lang_contact_sql = (
+            "CASE CAST(Company_Language AS VARCHAR)"
+            " WHEN '0' THEN 'French'"
+            " WHEN '1' THEN 'Foreign'"
+            " ELSE NULL END"
+        ) if "Company_Language" in contact_cols else "NULL"
         full_country_sql     = self._case_expr(f"({country_sql})", ISO_TO_FULL_COUNTRY_MAP, "NULL") if "Address_Country" in contact_cols else "NULL"
 
         # LinkedIn_URL is optional — only present when MC_socialnetworks was joined at extraction.
@@ -529,7 +535,7 @@ class SilverNormaliser:
                 {"LEFT(REGEXP_REPLACE(COALESCE(Pers_Title,''), '<[^>]+>', '', 'g'), 150) AS icalps_perstitle" if "Pers_Title" in contact_cols else "NULL AS icalps_perstitle"},
                 {_col_or_null("Pers_Department", "icalps_department")},
                 {contact_status_sql}                          AS icalps_contactstatus,
-                {pers_lang_sql}                               AS icalps_language,
+                {company_lang_contact_sql}                    AS icalps_language,
                 {_col_or_null("Pers_Source")},
                 {_col_or_null("Pers_Territory")},
                 {_col_or_null("Pers_WebSite")},
