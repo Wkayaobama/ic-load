@@ -389,7 +389,7 @@ class SilverNormaliser:
             SELECT
                 Comp_CompanyId AS icalps_company_id,
                 Comp_Name,
-                Comp_WebSite                                  AS icalps_comp_website,
+                TRIM(Comp_WebSite)                            AS icalps_comp_website,
                 Comp_Sector                                   AS icalps_company_sector,
                 Comp_Employees                                AS icalps_comp_numemployees,
                 Comp_CreatedDate,
@@ -448,7 +448,12 @@ class SilverNormaliser:
 
         # Phone normalisation via pandas (E.164 regex not trivial in DuckDB)
         df = self.con.execute("SELECT * FROM stg_company_normalised").df()
-        df["icalps_owner_email"]    = df["icalps_owner_email"].replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
+        df["icalps_comp_website"]   = df["icalps_comp_website"].str.strip()
+        df["icalps_comp_website"]   = df["icalps_comp_website"].str.replace(r'^http://\s+', '', regex=True)
+        df["icalps_comp_website"]   = df["icalps_comp_website"].str.replace(r'^ttps://', 'https://', regex=True)
+        df["icalps_linkedin_url"]   = df["icalps_linkedin_url"].str.strip()
+        df["icalps_companyemail"]   = df["icalps_companyemail"].str.strip()
+        df["icalps_owner_email"]    = df["icalps_owner_email"].str.strip().replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
         df["icalps_owner_fullname"] = df["icalps_owner_fullname"].replace(r'^\s*$', pd.NA, regex=True).fillna("Thierry VILLARD")
         if "Company_Phone" in self.con.execute("SELECT * FROM stg_company LIMIT 0").df().columns:
             raw_phones = self.con.execute("SELECT Comp_CompanyId, Company_Phone FROM stg_company").df()
@@ -608,7 +613,12 @@ class SilverNormaliser:
         """)
 
         df = self.con.execute("SELECT * FROM stg_contact_normalised_base").df()
-        df["icalps_owner_email"]    = df["icalps_owner_email"].replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
+        df["Company_WebSite"]       = df["Company_WebSite"].str.strip()
+        df["Company_WebSite"]       = df["Company_WebSite"].str.replace(r'^http://\s+', '', regex=True)
+        df["Company_WebSite"]       = df["Company_WebSite"].str.replace(r'^ttps://', 'https://', regex=True)
+        df["icalps_email"]          = df["icalps_email"].str.strip()
+        df["icalps_linkedin_url"]   = df["icalps_linkedin_url"].str.strip()
+        df["icalps_owner_email"]    = df["icalps_owner_email"].str.strip().replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
         df["icalps_owner_fullname"] = df["icalps_owner_fullname"].replace(r'^\s*$', pd.NA, regex=True).fillna("Thierry VILLARD")
 
         # Phone normalisation - join on icalps_contact_id
@@ -767,7 +777,8 @@ class SilverNormaliser:
         """)
 
         df = self.con.execute("SELECT * FROM stg_opportunity_deduped").df()
-        df["icalps_owner_email"]    = df["icalps_owner_email"].replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
+        df["person_email"]          = df["person_email"].str.strip()
+        df["icalps_owner_email"]    = df["icalps_owner_email"].str.strip().replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
         df["icalps_owner_fullname"] = df["icalps_owner_fullname"].replace(r'^\s*$', pd.NA, regex=True).fillna("Thierry VILLARD")
 
         # Phone normalisation (E.164) — same logic as stg_company_normalised
