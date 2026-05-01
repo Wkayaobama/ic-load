@@ -391,6 +391,7 @@ class SilverNormaliser:
                 Comp_Name,
                 TRIM(Comp_WebSite)                            AS icalps_comp_website,
                 Comp_Sector                                   AS icalps_company_sector,
+                Comp_Sector                                   AS icalps_industry_drill_down,
                 Comp_Employees                                AS icalps_comp_numemployees,
                 Comp_CreatedDate,
                 Comp_UpdatedDate,
@@ -561,7 +562,7 @@ class SilverNormaliser:
                 {_col_or_null("Pers_FirstName")},
                 {_col_or_null("Pers_LastName")},
                 {_col_or_null("Pers_MiddleName")},
-                {_col_or_null("Pers_Salutation")},
+                {_col_or_null("Pers_Salutation", "icalps_salutations")},
                 {_col_or_null("Pers_Gender")},
                 {_col_or_null("Pers_Suffix")},
                 -- Title: strip HTML, truncate 150 chars
@@ -666,7 +667,7 @@ class SilverNormaliser:
         # Map these to canonical silver column names (pipeline/dealstage coexist with icalps_stage/icalps_dealstatus)
         # Note: explicitly use AS alias since _col_or_null doesn't alias when column exists
         hs_pipeline_sql        = "COALESCE(\"HubSpot_Pipeline_ID\", '766126206') AS pipeline" if "HubSpot_Pipeline_ID" in opp_cols else "'766126206' AS pipeline"
-        hs_dealstage_sql       = "\"HubSpot_Dealstage_ID\" AS dealstage" if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS dealstage"
+        hs_dealstage_sql       = "\"HubSpot_Dealstage_ID\" AS icalps_stageid" if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS icalps_stageid"
         company_language_sql   = (
             "CASE CAST(Company_Language AS VARCHAR)"
             " WHEN '0' THEN 'French'"
@@ -690,22 +691,13 @@ class SilverNormaliser:
                 {oppo_category_sql},
                 Oppo_Stage AS icalps_stage,
                 Oppo_Status AS icalps_dealstatus,
-                Oppo_AssignedUserId AS oppo_assigneduserid,
+                Oppo_AssignedUserId AS icalps_ownerid,
                 {oppo_notes_sql},
                 {oppo_deleted_sql},
                 Oppo_PrimaryCompanyId AS icalps_company_id,
                 Oppo_PrimaryPersonId AS icalps_contact_id,
                 Oppo_CreatedDate AS oppo_createddate,
                 Oppo_UpdatedDate AS oppo_updateddate,
-
-                -- Close date: normalise to DATE (strip time component)
-                TRY_CAST(
-                    CASE
-                        WHEN Oppo_CloseDate LIKE '%T%'
-                            THEN SPLIT_PART(Oppo_CloseDate, 'T', 1)
-                        ELSE Oppo_CloseDate
-                    END
-                AS DATE)                                      AS icalps_closedate,
 
                 {oppo_opened_date_sql}                        AS icalps_opendate,
                 {oppo_targetclose_sql}                        AS icalps_targetclose,
@@ -737,11 +729,11 @@ class SilverNormaliser:
                         ),
                         ' ', ''
                     )
-                AS DOUBLE)                                    AS icalps_cost,
+                AS DOUBLE)                                    AS ic_alps_cost,
 
                 -- Forecast: source is in absolute euros, normalise to k€
                 TRY_CAST(Oppo_Forecast AS DOUBLE) / 1000.0   AS icalps_forecast,
-                TRY_CAST(Oppo_Certainty AS DOUBLE)            AS icalps_dealcertainty,
+                TRY_CAST(Oppo_Certainty AS DOUBLE)            AS icalps_oppocertainty,
 
                 -- Deduplication rank (keep latest by UpdatedDate)
                 ROW_NUMBER() OVER (
@@ -754,9 +746,9 @@ class SilverNormaliser:
                 {hs_pipeline_sql},
 
                 -- Denormalised
-                Company_Name AS company_name, {company_language_sql},
+                Company_Name AS icalps_primarydealcompany, {company_language_sql},
                 {company_phone_sql},
-                Person_FirstName AS person_firstname, Person_LastName AS person_lastname, {person_email_sql},
+                Person_FirstName AS icalps_dealprimarycontactfirstname, Person_LastName AS icalps_primarycontactlastname, {person_email_sql},
                 {user_fullname_sql}, {user_email_sql},
 
                 -- Load-status watermark (set by bronze_loader, carried through unchanged)
