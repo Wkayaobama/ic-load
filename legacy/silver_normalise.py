@@ -34,6 +34,9 @@ import pandas as pd
 # Use ic-load's context.db for PostgreSQL connection
 from context.db import get_connection
 
+# Financial unit conversion — single source of truth for euros -> k€.
+from context.algorithms.financial_normalise import to_keuros
+
 # Import sibling algorithms from ic-load's context.algorithms
 try:
     from context.algorithms.company_siblings import (
@@ -568,7 +571,7 @@ class SilverNormaliser:
                 {_col_or_null("Pers_FirstName")},
                 {_col_or_null("Pers_LastName")},
                 {_col_or_null("Pers_MiddleName")},
-                {_col_or_null("Pers_Salutation")},
+                {_col_or_null("Pers_Salutation", "icalps_salutations")},
                 {_col_or_null("Pers_Gender")},
                 {_col_or_null("Pers_Suffix")},
                 -- Title: strip HTML, truncate 150 chars
@@ -735,7 +738,8 @@ class SilverNormaliser:
                     AS DATE)
                 )                                             AS icalps_effectiveclosedate,
 
-                -- Cost: strip currency symbol, normalise decimal
+                -- Cost: strip currency symbol, normalise decimal.
+                -- Values are in absolute euros here; converted to k€ post-view via to_keuros().
                 TRY_CAST(
                     REPLACE(
                         REPLACE(
@@ -744,16 +748,15 @@ class SilverNormaliser:
                         ),
                         ' ', ''
                     )
-                AS DOUBLE)                                    AS icalps_cost,
+                AS DOUBLE)                                    AS ic_alps_cost,
 
-                -- Forecast (k€ assumed — validated in validate_silver.py)
+                -- Forecast: absolute euros here; converted to k€ post-view via to_keuros().
                 TRY_CAST(Oppo_Forecast AS DOUBLE)             AS icalps_forecast,
-                TRY_CAST(Oppo_Certainty AS DOUBLE)            AS icalps_dealcertainty,
+                TRY_CAST(Oppo_Certainty AS DOUBLE)            AS icalps_oppocertainty,
 
-                -- Computed columns (replicate HubSpot custom properties)
-                TRY_CAST(Oppo_Forecast AS DOUBLE)
-                    * TRY_CAST(Oppo_Certainty AS DOUBLE) / 100.0
-                                                              AS cc_weighted,
+                -- Net amount in absolute euros; converted to k€ post-view via to_keuros().
+                -- (cc_weighted intentionally removed — HubSpot computes weighted_amount as a
+                -- calculated property; no Silver-side import needed.)
                 TRY_CAST(Oppo_Forecast AS DOUBLE)
                     - COALESCE(TRY_CAST(
                         REPLACE(
@@ -775,9 +778,10 @@ class SilverNormaliser:
                 {hs_pipeline_sql},
 
                 -- Denormalised
-                Company_Name AS company_name, {company_language_sql},
+                Company_Name AS icalps_primarydealcompany, {company_language_sql},
                 {company_phone_sql},
-                Person_FirstName AS person_firstname, Person_LastName AS person_lastname, {person_email_sql},
+                NULLIF(CONCAT_WS(' ', NULLIF(Person_FirstName,''), NULLIF(Person_LastName,'')), '') AS icalps_primaryoppocontact,
+                Person_FirstName AS icalps_dealprimarycontactfirstname, Person_LastName AS icalps_primarycontactlastname, {person_email_sql},
                 {user_fullname_sql}, {user_email_sql},
 
                 -- Load-status watermark (set by bronze_loader, carried through unchanged)
@@ -800,8 +804,16 @@ class SilverNormaliser:
         df = self.con.execute("SELECT * FROM stg_opportunity_deduped").df()
         df["person_email"]          = df["person_email"].str.strip()
 
-        # Add cc_net_weighted
-        df["cc_net_weighted"] = df["cc_net"] * df["icalps_dealcertainty"] / 100.0
+        # Convert forecast / cost / cc_net from absolute euros to k€.
+        # to_keuros is linear (k(a-b) == ka - kb), so applying it to all three
+        # keeps them unit-consistent. icalps_oppocertainty is a percent and
+        # stays unchanged.
+        df["icalps_forecast"] = df["icalps_forecast"].apply(to_keuros)
+        df["ic_alps_cost"]    = df["ic_alps_cost"].apply(to_keuros)
+        df["cc_net"]          = df["cc_net"].apply(to_keuros)
+
+        # cc_net_weighted derives from already-converted (k€) cc_net.
+        df["cc_net_weighted"] = df["cc_net"] * df["icalps_oppocertainty"] / 100.0
 
         # Phone normalisation (E.164) — same logic as stg_company_normalised
         if "icalps_companyphone" in df.columns:
