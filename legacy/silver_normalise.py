@@ -586,6 +586,9 @@ class SilverNormaliser:
                 {_col_or_null("Pers_UpdatedDate")},
                 {_col_or_null("Pers_CreatedBy")},
 
+                -- Marketable flag: Y = opted out (false), NULL = marketable (true)
+                {"CASE WHEN Pers_OptOut = 'Y' THEN FALSE ELSE TRUE END AS pers_marketable" if "Pers_OptOut" in contact_cols else "TRUE AS pers_marketable"},
+
                 -- Soft-delete flag (carried through unchanged)
                 {_col_or_null("Pers_Deleted", "pers_deleted")},
 
