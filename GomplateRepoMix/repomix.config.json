@@ -31,7 +31,7 @@
     "../../ic_load_pipeline/python-ignorethis/custom_objects/create_company_hierarchy.py",
     "../../ic_load_pipeline/python-ignorethis/custom_objects/upsert_sibling_companies.py",
     "../../custom_objects/SIBLING_COMPANY_PIPELINE.md",
-    "../../ic_load_pipeline/python-ignorethis/deal_stage_mapper.py",
+    "../context/algorithms/deal_stage_mapper.py",
     "../../ic_load_pipeline/python-ignorethis/process_silver_layer.py",
     "../../ic_load_pipeline/python-ignorethis/process_opportunities.py",
     "../../DEAL_STAGE_MAPPING_VISUAL.md",

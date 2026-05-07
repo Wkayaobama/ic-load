@@ -1,10 +1,14 @@
+"""Per-entity pipeline executor.
+
+See IC_Load_Production_Plan.md §5.1 for the stage sequence.
+"""
 from __future__ import annotations
 
 import argparse
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from context.config import (
     DBT_PROJECT_DIR,
@@ -125,7 +129,6 @@ def run(
     skip_validation: bool = False,
     bronze_only: bool = False,
     silver_only: bool = False,
-    dbt_only: bool = False,
     assoc_only: bool = False,
     verbosity: str = "low",
     probe_mode: bool = False,
@@ -168,7 +171,12 @@ def run(
         _finish(ctx)
         return ctx
 
-    if not dbt_only and not _already_past(ctx, PipelineStage.BRONZE_EXPORT):
+    # PG_FUNCTIONS_INSTALL runs once per run invocation (Contract A, §7.6).
+    # Harmless repeat when the orchestrator also calls it up-front (CREATE OR REPLACE).
+    if not _already_past(ctx, PipelineStage.PG_FUNCTIONS_INSTALL):
+        _run_pg_functions_install(ctx, dry_run, hooks)
+
+    if not _already_past(ctx, PipelineStage.BRONZE_EXPORT):
         _run_bronze(ctx, entity, dry_run, resume_stage, hooks, bronze_csv_override)
 
     if bronze_only:
@@ -176,7 +184,7 @@ def run(
         _finish(ctx)
         return ctx
 
-    if not dbt_only and not _already_past(ctx, PipelineStage.SILVER_VALIDATE):
+    if not _already_past(ctx, PipelineStage.SILVER_VALIDATE):
         _run_silver(ctx, entity, dry_run, skip_validation, owner_blocking, verbosity, hooks)
 
     if silver_only:
@@ -198,6 +206,12 @@ def run(
 
     _run_stacksync_sync(ctx, entity, dry_run, hooks)
     _run_assoc_validate(ctx, entity, dry_run, preview, hooks)
+
+    # Entity-specific post-assoc work (e.g. company hierarchy, comm unflatten).
+    _run_entity_postprocess(ctx, entity, "post", dry_run, hooks)
+
+    # Reconciliation coverage report (WARNING if below threshold, never FAILED).
+    _run_post_run_verify(ctx, entity, dry_run, hooks)
 
     transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS)
     _finish(ctx)
@@ -256,12 +270,14 @@ def _run_bronze(
     csv_path = Path(bronze_csv_override) if bronze_csv_override else latest_bronze_path(entity)
     if csv_path is None:
         transition(ctx, PipelineStage.BRONZE_LOAD, StageStatus.FAILED, reason="no_bronze_csv_found", entity=entity)
+        return
 
     if _should_run(ctx, PipelineStage.BRONZE_LOAD, resume_stage):
         try:
             rows = loader.load_csv_to_duckdb(str(csv_path), f"bronze_{entity}")
         except Exception as exc:
             transition(ctx, PipelineStage.BRONZE_LOAD, StageStatus.FAILED, reason=str(exc))
+            return
         transition(ctx, PipelineStage.BRONZE_LOAD, StageStatus.SUCCESS, row_count=rows, csv=str(csv_path))
 
     if _should_run(ctx, PipelineStage.BRONZE_METADATA, resume_stage):
@@ -269,14 +285,19 @@ def _run_bronze(
             loader.add_bronze_metadata(f"bronze_{entity}", str(csv_path))
         except Exception as exc:
             transition(ctx, PipelineStage.BRONZE_METADATA, StageStatus.FAILED, reason=str(exc))
+            return
         transition(ctx, PipelineStage.BRONZE_METADATA, StageStatus.SUCCESS)
 
     if _should_run(ctx, PipelineStage.BRONZE_WATERMARK, resume_stage):
-        try:
-            counts = loader._tag_load_status(f"bronze_{entity}", entity_cfg.primary_key)
-        except Exception as exc:
-            transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.FAILED, reason=str(exc))
-        transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SUCCESS, **counts)
+        if dry_run:
+            transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SKIPPED, reason="dry_run")
+        else:
+            try:
+                counts = loader._tag_load_status(f"bronze_{entity}", entity_cfg.primary_key)
+            except Exception as exc:
+                transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.FAILED, reason=str(exc))
+                return
+            transition(ctx, PipelineStage.BRONZE_WATERMARK, StageStatus.SUCCESS, **counts)
 
     if _should_run(ctx, PipelineStage.BRONZE_EXPORT, resume_stage):
         if dry_run:
@@ -286,6 +307,7 @@ def _run_bronze(
                 exported = loader.export_to_postgres(f"bronze_{entity}", entity_cfg.staging_table)
             except Exception as exc:
                 transition(ctx, PipelineStage.BRONZE_EXPORT, StageStatus.FAILED, reason=str(exc))
+                return
             transition(ctx, PipelineStage.BRONZE_EXPORT, StageStatus.SUCCESS, exported=exported)
 
 
@@ -369,18 +391,270 @@ def _run_silver_validate(ctx: PipelineContext, owner_blocking: bool, verbosity: 
         transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SUCCESS)
 
 
-def _run_dbt(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
-    if not _should_run(ctx, PipelineStage.DBT_BUILD, None):
+def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: PipelineHooks) -> None:
+    """PG_FUNCTIONS_INSTALL — install all pg functions from MANIFEST.yaml.
+
+    Contract A (§7.6): runs as a stage of EVERY runner invocation, not
+    only at the orchestrator level. Idempotent — CREATE OR REPLACE.
+    """
+    if not _should_run(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, None):
         return
     # Skip in dry_run or preview mode: dbt already ran in 07_dbt.ps1
     if dry_run or ctx.metadata.get("preview"):
         skip_reason = "dry_run" if dry_run else "preview"
         transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SKIPPED, reason=skip_reason)
         return
-    ok = hooks.dbt_runner(entity, dry_run)
-    if not ok:
-        transition(ctx, PipelineStage.DBT_BUILD, StageStatus.FAILED, reason="dbt_run_nonzero_exit")
-    transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SUCCESS)
+    result = hooks.pg_functions_installer(False)
+    transition(
+        ctx,
+        PipelineStage.PG_FUNCTIONS_INSTALL,
+        StageStatus.SUCCESS,
+        installed=len(result.get("installed", [])),
+        duration_s=result.get("duration_s"),
+    )
+
+
+def _run_entity_postprocess(
+    ctx: PipelineContext,
+    entity: str,
+    phase: Literal["pre", "post"],
+    dry_run: bool,
+    hooks: PipelineHooks,
+) -> None:
+    """ENTITY_POSTPROCESS_{PRE,POST} — MANIFEST-driven dispatcher.
+
+    Dispatches entity-specific steps registered under
+    MANIFEST.yaml:entities.{entity}.postprocess.{phase}. Entities without
+    postprocess entries for the phase receive mode='not_applicable' and
+    the stage transitions to SKIPPED.
+    """
+    stage = (
+        PipelineStage.ENTITY_POSTPROCESS_PRE if phase == "pre"
+        else PipelineStage.ENTITY_POSTPROCESS_POST
+    )
+    if not _should_run(ctx, stage, None):
+        return
+    if dry_run:
+        transition(ctx, stage, StageStatus.SKIPPED, reason="dry_run", phase=phase)
+        return
+    result = hooks.entity_postprocessor(entity, phase, False)
+    mode = result.get("mode", "unknown")
+    if mode == "not_applicable":
+        transition(ctx, stage, StageStatus.SKIPPED, reason="no_postprocess_registered", phase=phase)
+        return
+    transition(
+        ctx,
+        stage,
+        StageStatus.SUCCESS,
+        phase=phase,
+        mode=mode,
+        steps=len(result.get("steps", [])),
+    )
+
+
+def _run_dedupe_guard(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    probe_mode: bool,
+    hooks: PipelineHooks,
+) -> None:
+    if not _should_run(ctx, PipelineStage.DEDUPE_GUARD, None):
+        return
+
+    result = hooks.dedupe_guarder(entity, dry_run)
+    ctx.metadata["dedupe_guard"] = result
+
+    block_count = int(result.get("block_count", 0))
+    review_count = int(result.get("review_count", 0))
+    not_applicable = result.get("mode") == "not_applicable"
+
+    if not_applicable:
+        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="not_applicable", entity=entity)
+        return
+
+    if block_count > 0:
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            StageStatus.FAILED,
+            block_count=block_count,
+            review_count=review_count,
+            artifact=result.get("artifact_json"),
+        )
+
+    if review_count > 0:
+        status = StageStatus.WARNING if dry_run or probe_mode else StageStatus.FAILED
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            status,
+            block_count=block_count,
+            review_count=review_count,
+            safe_count=result.get("safe_count", 0),
+            artifact=result.get("artifact_json"),
+        )
+        return
+
+    transition(
+        ctx,
+        PipelineStage.DEDUPE_GUARD,
+        StageStatus.SUCCESS,
+        block_count=block_count,
+        review_count=review_count,
+        safe_count=result.get("safe_count", 0),
+        artifact=result.get("artifact_json"),
+    )
+
+
+def _run_post_run_verify(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+    """POST_RUN_VERIFY — reconciliation coverage + association coverage report.
+
+    WARNING (not FAILED) when metrics fall below thresholds — the upsert
+    already landed; a low coverage report is informational, not a rollback.
+    """
+    if not _should_run(ctx, PipelineStage.POST_RUN_VERIFY, None):
+        return
+    if dry_run:
+        transition(ctx, PipelineStage.POST_RUN_VERIFY, StageStatus.SKIPPED, reason="dry_run")
+        return
+    result = hooks.post_run_verifier(entity, False)
+
+    reconciliation_rate = result.get("reconciliation_rate", 0.0)
+    association_coverage = result.get("association_coverage", 0.0)
+    warnings_list = result.get("warnings", [])
+    thresholds = ctx.metadata.get("thresholds", {})
+    min_reconciliation = thresholds.get("min_reconciliation_rate", 0.85)
+    min_association = thresholds.get("min_association_coverage", 0.85)
+
+    status = StageStatus.SUCCESS
+    if reconciliation_rate < min_reconciliation or association_coverage < min_association:
+        status = StageStatus.WARNING
+
+    transition(
+        ctx,
+        PipelineStage.POST_RUN_VERIFY,
+        status,
+        reconciliation_rate=reconciliation_rate,
+        association_coverage=association_coverage,
+        warnings_count=len(warnings_list),
+        min_reconciliation=min_reconciliation,
+        min_association=min_association,
+    )
+
+
+def _run_gold_validate(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    approve_gold: bool,
+) -> None:
+    """GOLD_VALIDATE — two-gate check before any hubspot.* write.
+
+    Gate 1: --approve-gold flag. The operator must explicitly confirm they've
+    reviewed the silver artifacts. Without this flag, the pipeline stops here
+    with a clear FAILED reason. This prevents accidental live writes.
+
+    Gate 2: pre-gold duplicate reconciliation key check. Reads the same
+    silver_table + match_column that render_entity_upsert will use for
+    ON CONFLICT. If duplicates exist, the upsert would silently overwrite
+    earlier rows — data loss. Better to FAIL here and force upstream dedupe.
+
+    The query is built from schema_context.yaml — same contract as the
+    gold upsert template. If schema_context is unavailable (e.g. entity
+    not in the config), gate 2 is skipped with a WARNING (gate 1 still
+    enforced).
+    """
+    if not _should_run(ctx, PipelineStage.GOLD_VALIDATE, None):
+        return
+    if dry_run:
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
+        return
+    if ctx.metadata.get("probe_mode"):
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="probe_mode")
+        return
+
+    # Gate 1: explicit operator approval
+    if not approve_gold:
+        transition(
+            ctx,
+            PipelineStage.GOLD_VALIDATE,
+            StageStatus.FAILED,
+            reason="explicit_gold_validation_required",
+            hint="Pass --approve-gold to confirm you have reviewed silver artifacts before gold upsert.",
+        )
+        # transition(FAILED) raises RuntimeError — execution stops here.
+
+    # Gate 2: pre-gold duplicate check on the ON CONFLICT column.
+    # Uses schema_context.yaml to find the exact silver_table + match_column
+    # that the upsert template will use — same source of truth, no drift.
+    entity_key_map = {
+        "company": "Company",
+        "contact": "Person",
+        "opportunity": "Opportunity",
+    }
+    schema_entity = entity_key_map.get(entity.lower())
+    if schema_entity:
+        try:
+            schema = load_schema_context()
+            cfg = schema.get("entities", {}).get(schema_entity, {})
+            upsert_cfg = cfg.get("upsert", {})
+            silver_table = cfg.get("silver_table")
+            match_column = upsert_cfg.get("match_column")
+
+            if silver_table and match_column:
+                from context.db import get_connection
+
+                check_sql = (
+                    f"SELECT {match_column}, COUNT(*) AS cnt "
+                    f"FROM {silver_table} "
+                    f"GROUP BY {match_column} "
+                    f"HAVING COUNT(*) > 1 "
+                    f"LIMIT 10"
+                )
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(check_sql)
+                        dupes = cur.fetchall()
+
+                if dupes:
+                    dupe_ids = [str(row[0]) for row in dupes[:5]]
+                    transition(
+                        ctx,
+                        PipelineStage.GOLD_VALIDATE,
+                        StageStatus.FAILED,
+                        reason="duplicate_reconciliation_keys_in_silver",
+                        silver_table=silver_table,
+                        match_column=match_column,
+                        sample_duplicate_ids=dupe_ids,
+                        total_duplicate_groups=len(dupes),
+                        hint=f"Fix duplicates in {silver_table}.{match_column} before gold upsert. "
+                             f"Run: SELECT {match_column}, COUNT(*) FROM {silver_table} GROUP BY {match_column} HAVING COUNT(*) > 1",
+                    )
+                    # FAILED raises — never reaches here.
+        except FileNotFoundError:
+            # schema_context YAML missing — skip gate 2, gate 1 was enough
+            pass
+        except Exception as exc:
+            # DB error during check — warn but don't block (gate 1 passed).
+            transition(
+                ctx,
+                PipelineStage.GOLD_VALIDATE,
+                StageStatus.WARNING,
+                reason="pre_gold_check_error",
+                error=str(exc)[:256],
+                note="Duplicate check failed but --approve-gold was set. Proceeding with caution.",
+            )
+            return
+
+    transition(
+        ctx,
+        PipelineStage.GOLD_VALIDATE,
+        StageStatus.SUCCESS,
+        reason="gold_validation_passed",
+        approve_gold=True,
+        duplicate_check="passed" if schema_entity else "skipped_no_schema_entity",
+    )
 
 
 def _run_dedupe_guard(
@@ -599,7 +873,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-validation", action="store_true")
     parser.add_argument("--bronze-only", action="store_true")
     parser.add_argument("--silver-only", action="store_true")
-    parser.add_argument("--dbt-only", action="store_true")
     parser.add_argument("--assoc-only", action="store_true")
     parser.add_argument("--verbosity", choices=["high", "low"], default="low")
     parser.add_argument("--probe-mode", action="store_true")
@@ -626,7 +899,6 @@ if __name__ == "__main__":
         skip_validation=args.skip_validation,
         bronze_only=args.bronze_only,
         silver_only=args.silver_only,
-        dbt_only=args.dbt_only,
         assoc_only=args.assoc_only,
         verbosity=args.verbosity,
         probe_mode=args.probe_mode,

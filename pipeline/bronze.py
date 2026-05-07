@@ -13,6 +13,11 @@ except ImportError:  # pragma: no cover - exercised only when live deps are abse
     duckdb = None
     pd = None
 
+try:
+    import psycopg2
+except ImportError:  # pragma: no cover
+    psycopg2 = None
+
 
 class DuckDBBronzeLoader:
     """Load approved Bronze extracts into staging with the legacy watermark logic intact."""
@@ -51,21 +56,18 @@ class DuckDBBronzeLoader:
 
     def add_bronze_metadata(self, table_name: str, source_file: str) -> None:
         """Attach source and load timestamps without mutating the source payload."""
-        try:
-            self.conn.execute(
-                f"""
-                ALTER TABLE {table_name}
-                ADD COLUMN IF NOT EXISTS _bronze_loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                """
-            )
-            self.conn.execute(
-                f"""
-                ALTER TABLE {table_name}
-                ADD COLUMN IF NOT EXISTS _bronze_source_file VARCHAR DEFAULT '{source_file}'
-                """
-            )
-        except Exception:
-            pass
+        self.conn.execute(
+            f"""
+            ALTER TABLE {table_name}
+            ADD COLUMN IF NOT EXISTS _bronze_loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            """
+        )
+        self.conn.execute(
+            f"""
+            ALTER TABLE {table_name}
+            ADD COLUMN IF NOT EXISTS _bronze_source_file VARCHAR DEFAULT '{source_file.replace("'", "''")}'
+            """
+        )
 
     def _tag_load_status(self, duckdb_table: str, pk_col: str, schema: str = "staging") -> dict[str, int]:
         """Preserve the proven NEW/MODIFIED/UNCHANGED watermark behavior from the legacy loader."""
@@ -93,8 +95,9 @@ class DuckDBBronzeLoader:
             if not prior_df.empty:
                 self.conn.register("prior_hashes", prior_df)
                 prior_exists = True
-        except Exception:
-            pass
+        except Exception as exc:
+            if psycopg2 is None or not isinstance(exc, psycopg2.errors.UndefinedTable):
+                raise
 
         if prior_exists:
             self.conn.execute(

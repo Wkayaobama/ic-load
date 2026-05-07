@@ -14,7 +14,7 @@ import yaml
 # The only path contract collaborators should rely on is "repo root contains
 # context/, pipeline/, sql/, ValidationRules/, and GomplateRepoMix/".
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+ARTIFACTS_DIR = Path(os.getenv("PIPELINE_ARTIFACTS_DIR", str(PROJECT_ROOT / "artifacts")))
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
 BRONZE_DIR = PROJECT_ROOT.parent / "bronze_layer"
@@ -23,6 +23,7 @@ VALIDATION_SCHEMA_PATH = PROJECT_ROOT / "ValidationRules" / "icalps_crm_schema.y
 SCHEMA_CONTEXT_PATH = PROJECT_ROOT / "GomplateRepoMix" / "schema_context.yaml"
 RUN_CONTEXT_PATH = PROJECT_ROOT / "GomplateRepoMix" / "run_context.yaml"
 BUSINESS_RULES_PATH = PROJECT_ROOT / "GomplateRepoMix" / "business_rules.yaml"
+MANIFEST_PATH = PROJECT_ROOT / "MANIFEST.yaml"
 SQL_TEMPLATE_DIR = PROJECT_ROOT / "sql" / "templates"
 SQL_RENDERED_DIR = PROJECT_ROOT / "sql" / "rendered"
 BENCHMARK_DIR = PROJECT_ROOT.parent / "benchmark"
@@ -122,6 +123,16 @@ def load_business_rules() -> dict[str, Any]:
 
 def load_validation_schema() -> dict[str, Any]:
     return load_yaml(VALIDATION_SCHEMA_PATH)
+
+
+def load_manifest() -> dict[str, Any]:
+    """Load MANIFEST.yaml — data registry for pipeline entities + hooks.
+
+    See IC_Load_Production_Plan.md §10 for the schema. Keys used by the
+    runner: entities.{entity}.sql_files.{gold_upsert,association_bridge,post_run_verify},
+    entities.{entity}.postprocess.{pre,post}.
+    """
+    return load_yaml(MANIFEST_PATH)
 
 
 def load_thresholds(entity: str) -> dict[str, Any]:

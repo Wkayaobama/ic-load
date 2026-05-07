@@ -72,6 +72,8 @@ def test_stop_validation_prevents_dbt_and_gold():
         gold_upserter=probe_hooks.gold_upserter,
         sync_waiter=probe_hooks.sync_waiter,
         association_runner=probe_hooks.association_runner,
+        post_run_verifier=probe_hooks.post_run_verifier,
+        sql_file_runner=probe_hooks.sql_file_runner,
     )
 
     with patch("pipeline.state.ARTIFACTS_DIR", tmp_path):

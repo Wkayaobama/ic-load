@@ -91,9 +91,9 @@ The following rules are now treated as universal salvage constraints:
 
 The reusable implementation lives in:
 
-- [pipeline/text_normalization.py](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/text_normalization.py)
-- [pipeline/raw_to_staging_snippet.py](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/pipeline/raw_to_staging_snippet.py)
-- [docs/RAW_CSV_TO_STAGING_SNIPPET.md](c:/Users/ayaobama/Documents/AnthonySalesOps/Codebase/IC_Load/ic-load/docs/RAW_CSV_TO_STAGING_SNIPPET.md)
+- [pipeline/text_normalization.py](../pipeline/text_normalization.py)
+- [pipeline/raw_to_staging_snippet.py](../pipeline/raw_to_staging_snippet.py)
+- [docs/RAW_CSV_TO_STAGING_SNIPPET.md](RAW_CSV_TO_STAGING_SNIPPET.md)
 
 ## What Must Stay Out Of Codespaces
 

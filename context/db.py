@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -69,13 +70,26 @@ def get_connection(config: dict[str, Any] | None = None):
     except ImportError as exc:
         raise RuntimeError("psycopg2 is required for live PostgreSQL access.") from exc
 
-    conn = psycopg2.connect(
-        host=cfg["host"],
-        port=cfg["port"],
-        database=cfg["database"],
-        user=cfg["user"],
-        password=cfg["password"],
-    )
+    connect_timeout = int(os.getenv("ICALPS_PG_CONNECT_TIMEOUT", "10"))
+    conn = None
+    last_exc: Exception | None = None
+    for delay in (0, 1, 2):
+        if delay:
+            time.sleep(delay)
+        try:
+            conn = psycopg2.connect(
+                host=cfg["host"],
+                port=cfg["port"],
+                database=cfg["database"],
+                user=cfg["user"],
+                password=cfg["password"],
+                connect_timeout=connect_timeout,
+            )
+            break
+        except psycopg2.OperationalError as exc:
+            last_exc = exc
+    if conn is None:
+        raise last_exc  # type: ignore[misc]
     try:
         yield conn
     finally:

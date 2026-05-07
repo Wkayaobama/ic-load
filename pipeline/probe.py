@@ -70,6 +70,8 @@ def make_probe_hooks(*, warning_only: bool = False) -> PipelineHooks:
         gold_upserter=lambda entity, dry_run: {"entity": entity, "mode": "probe", "statements": [{"file": "probe.sql"}]},
         sync_waiter=lambda entity, dry_run: {"entity": entity, "synced": True, "mode": "probe"},
         association_runner=lambda entity, dry_run: {"entity": entity, "mode": "probe", "statements": [{"file": "probe_assoc.sql"}]},
+        post_run_verifier=lambda entity, dry_run: {"reconciliation_rate": 1.0, "association_coverage": 1.0, "warnings": []},
+        sql_file_runner=lambda path, params, dry_run: {},
     )
 
 

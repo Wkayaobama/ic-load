@@ -62,7 +62,7 @@ dedupe_guardrail:
 
 deal_stage_mapper:
   non_negotiable: true
-  authority: "../../ic_load_pipeline/python-ignorethis/deal_stage_mapper.py"
+  authority: "context/algorithms/deal_stage_mapper.py"
   legacy_reference: "../../DEAL_STAGE_MAPPING_VISUAL.md"
   rule: "Deal stage mapping must resolve pipeline + stage + outcome to HubSpot-native pipeline/stage IDs."
   normalization:

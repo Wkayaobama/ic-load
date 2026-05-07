@@ -15,7 +15,7 @@ def test_repomix_bundle_includes_non_negotiable_algorithm_context():
     assert "../../ic_load_pipeline/python-ignorethis/custom_objects/create_company_hierarchy.py" in include
     assert "../../ic_load_pipeline/python-ignorethis/custom_objects/upsert_sibling_companies.py" in include
     assert "../../custom_objects/SIBLING_COMPANY_PIPELINE.md" in include
-    assert "../../ic_load_pipeline/python-ignorethis/deal_stage_mapper.py" in include
+    assert "../context/algorithms/deal_stage_mapper.py" in include
     assert "../../ic_load_pipeline/python-ignorethis/process_silver_layer.py" in include
     assert "../../ic_load_pipeline/python-ignorethis/process_opportunities.py" in include
     assert "../../DEAL_STAGE_MAPPING_VISUAL.md" in include
