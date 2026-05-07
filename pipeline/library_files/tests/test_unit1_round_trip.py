@@ -25,7 +25,7 @@ import pytest
 from pipeline.library_files.client import HubSpotClient
 from pipeline.library_files.config import Settings
 
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(__file__).parent / "fixtures" / "library_root"
 
 
 @pytest.mark.live_sandbox

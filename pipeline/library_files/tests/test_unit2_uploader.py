@@ -25,7 +25,7 @@ from pipeline.library_files.uploader import (
     STATUS_UPLOADED,
 )
 
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(__file__).parent / "fixtures" / "library_root"
 
 
 # -- Offline retry test (no sandbox needed) ----------------------------------
