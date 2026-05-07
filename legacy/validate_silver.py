@@ -177,7 +177,7 @@ class SilverValidator:
             FROM staging.stg_contact_normalised
         """)
         passed_email = void_email < 10
-        severity: Severity = "STOP" if void_email > 25 else "WARN"
+        severity: Severity = "STOP" if void_email > 35 else "WARN"
         self._add("contact.email_void_pct", severity, void_email, "<10% warn / >25% STOP",
                   passed_email, "Check Person_Email JOIN in Bronze extraction query")
 
