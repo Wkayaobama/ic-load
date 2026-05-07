@@ -866,7 +866,6 @@ class SilverNormaliser:
                 {_c('Person_Name')},
                 {_c('Comp_CompanyId')},
                 {_c('Comp_Name')},
-                {_c('Comp_WebSite')},
                 -- Owner email: prefer direct Comm_OwnerEmail, fall back to denormalised Companies join
                 COALESCE(
                     {"Comm_OwnerEmail" if "Comm_OwnerEmail" in comm_cols else "NULL"},
