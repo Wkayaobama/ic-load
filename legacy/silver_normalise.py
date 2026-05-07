@@ -865,10 +865,10 @@ class SilverNormaliser:
                 -- Soft-delete flag (carried through unchanged)
                 {_c('Comm_Deleted')},
                 -- Denormalised (may be absent from older Bronze extracts)
-                {_c('Person_Email')},
-                {_c('Person_Name')},
-                {_c('Comp_CompanyId')},
-                {_c('Comp_Name')},
+                {"Person_EmailAddress AS person_email" if "Person_EmailAddress" in comm_cols else "NULL AS person_email"},
+                {"NULLIF(TRIM(CONCAT_WS(' ', NULLIF(Person_FirstName,''), NULLIF(Person_LastName,''))), '') AS person_name" if ("Person_FirstName" in comm_cols or "Person_LastName" in comm_cols) else "NULL AS person_name"},
+                {"Company_Id AS comp_companyid" if "Company_Id" in comm_cols else "NULL AS comp_companyid"},
+                {"Company_Name AS comp_name" if "Company_Name" in comm_cols else "NULL AS comp_name"},
                 -- Owner email: prefer direct Comm_OwnerEmail, fall back to denormalised Companies join
                 COALESCE(
                     {"Comm_OwnerEmail" if "Comm_OwnerEmail" in comm_cols else "NULL"},
