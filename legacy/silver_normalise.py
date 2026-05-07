@@ -676,10 +676,21 @@ class SilverNormaliser:
         oppo_actual_close_sql  = _col_or_null("Oppo_ActualClose", "icalps_effectiveclosedate")
         oppo_closed_sql        = _col_or_null("Oppo_Closed", "oppo_closed")
         # HubSpot stage mapping: Bronze has HubSpot_Pipeline_ID and HubSpot_Dealstage_ID
-        # Map these to canonical silver column names (pipeline/dealstage coexist with icalps_stage/icalps_dealstatus)
+        # Map these to canonical silver column names (pipeline/hubspot_stageid coexist with icalps_stage/icalps_dealstatus)
         # Note: explicitly use AS alias since _col_or_null doesn't alias when column exists
         hs_pipeline_sql        = "COALESCE(\"HubSpot_Pipeline_ID\", '766126206') AS pipeline" if "HubSpot_Pipeline_ID" in opp_cols else "'766126206' AS pipeline"
-        hs_dealstage_sql       = "\"HubSpot_Dealstage_ID\" AS dealstage" if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS dealstage"
+        hs_dealstage_sql       = "\"HubSpot_Dealstage_ID\" AS hubspot_stageid" if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS hubspot_stageid"
+        hs_dealstage_name_sql  = (
+            "CASE CAST(\"HubSpot_Dealstage_ID\" AS VARCHAR)"
+            " WHEN '1116419644' THEN 'Identified'"
+            " WHEN '1116419645' THEN 'Qualified'"
+            " WHEN '1116419646' THEN 'Design In'"
+            " WHEN '1116419647' THEN 'Design Win'"
+            " WHEN '1116419649' THEN 'Closed Won'"
+            " WHEN '1116419650' THEN 'Closed Dead'"
+            " WHEN '1313738265' THEN 'Closed Lost'"
+            " END AS hubspot_dealstage_name"
+        ) if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS hubspot_dealstage_name"
         company_language_sql   = (
             "CASE CAST(Company_Language AS VARCHAR)"
             " WHEN '0' THEN 'French'"
@@ -778,6 +789,7 @@ class SilverNormaliser:
 
                 -- HubSpot stage mapping (pre-computed at Bronze extraction; NULL if not extracted)
                 {hs_dealstage_sql},
+                {hs_dealstage_name_sql},
                 {hs_pipeline_sql},
 
                 -- Denormalised

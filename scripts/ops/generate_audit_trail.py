@@ -121,7 +121,7 @@ def main():
                 cur.execute("SELECT COUNT(DISTINCT pipeline) FROM staging.stg_opportunity_normalised WHERE pipeline IS NOT NULL")
                 add_metric("Opportunity", "Silver", "distinct_pipelines", cur.fetchone()[0])
 
-                cur.execute("SELECT COUNT(DISTINCT dealstage) FROM staging.stg_opportunity_normalised WHERE dealstage IS NOT NULL")
+                cur.execute("SELECT COUNT(DISTINCT hubspot_stageid) FROM staging.stg_opportunity_normalised WHERE hubspot_stageid IS NOT NULL")
                 add_metric("Opportunity", "Silver", "distinct_stages", cur.fetchone()[0])
 
             except Exception as e:

@@ -112,7 +112,7 @@ def select_body_entity(entity: str, schema: dict[str, Any] | None = None, run: d
         """
     elif entity == "Opportunity":
         # Column mapping from stg_opportunity_normalised (produced by silver_normalise.py)
-        # Silver layer outputs: pipeline, dealstage (from Bronze HubSpot_* columns)
+        # Silver layer outputs: pipeline, hubspot_stageid (from Bronze HubSpot_* columns)
         # and icalps_stage, icalps_dealstatus (from Bronze Oppo_Stage, Oppo_Status)
         body = f"""
         SELECT
@@ -121,7 +121,7 @@ def select_body_entity(entity: str, schema: dict[str, Any] | None = None, run: d
             stg.icalps_contact_id::text AS icalps_contact_id,
             stg.oppo_description AS dealname,
             stg.pipeline,
-            stg.dealstage,
+            stg.hubspot_stageid,
             stg.icalps_stage,
             stg.icalps_dealstatus,
             stg.icalps_dealtype,

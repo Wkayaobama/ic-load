@@ -352,7 +352,7 @@ def load_entity_translation_contract() -> dict[str, Any]:
                     "icalps_dealforecast": "amount",
                     "icalps_dealcertainty": "icalps_oppocertainty",
                     "pipeline": "pipeline",
-                    "dealstage": "dealstage",
+                    "dealstage": "hubspot_stageid",
                     "closedate": "icalps_closedate",
                     "ic_alps_cost": "ic_alps_cost",
                     "icalps_stage": "icalps_stage",
