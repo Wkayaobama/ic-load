@@ -40,7 +40,7 @@ Columns we consume (everything else passes through `stg_library_normalised` as-i
 | `Libr_Type`, `Libr_Category` | optional metadata | could populate hidden note properties later |
 | `Libr_Active`, `Libr_Deleted` | filter predicates | keep `Active='Y' AND (Deleted IS NULL OR Deleted=0)` |
 | `Libr_CreatedDate` | candidate for `hs_timestamp` | else default to `now()` |
-| `Libr_CreatedBy`, `Libr_UpdatedBy` | owner resolution candidate | optional, mirrors Communication R4 |
+| `Libr_CreatedBy`, `Libr_UpdatedBy` | **owner resolution (confirmed)** | resolves through `staging.stg_owner_resolution` to `icalps_owner_email` / `icalps_owner_fullname` note custom properties |
 
 **Filter applied at silver:** `Active='Y' AND Deleted IN (NULL, 0) AND (Libr_CompanyId IS NOT NULL OR Libr_PersonId IS NOT NULL OR Libr_OpportunityId IS NOT NULL)`. The last clause drops the "Global Templates" rows visible in the sample — they have no record to associate to and would fail the Phase 2 "at least one association" guard anyway.
 
@@ -196,6 +196,9 @@ CREATE TABLE IF NOT EXISTS staging.stg_library_normalised (
     libr_updated_by     INT,
     libr_created_at     TIMESTAMPTZ,
     libr_updated_at     TIMESTAMPTZ,
+    -- owner resolution (decision #8): resolved at silver time
+    icalps_owner_email     TEXT,
+    icalps_owner_fullname  TEXT,
     loaded_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
@@ -228,7 +231,9 @@ SELECT
     s.legacy_deal_id::text      AS legacy_deal_id,
     hc.id::text                 AS hubspot_company_id,
     hp.id::text                 AS hubspot_contact_id,
-    hd.id::text                 AS hubspot_deal_id
+    hd.id::text                 AS hubspot_deal_id,
+    s.icalps_owner_email        AS icalps_owner_email,
+    s.icalps_owner_fullname     AS icalps_owner_fullname
 FROM staging.stg_library_normalised s
 LEFT JOIN hubspot.companies hc ON hc.icalps_company_id = s.legacy_company_id
 LEFT JOIN hubspot.contacts  hp ON hp.icalps_contact_id = s.legacy_contact_id
@@ -416,12 +421,9 @@ No new HubSpot endpoints are introduced after Unit 4. The remaining work is oper
 | 3 | Idempotency strategy | Ledger-only (no HubSpot-side dedup property). |
 | 4 | Phase 9 pilot scope | **1 row, operator-chosen** (tightened from prior draft of 10). |
 | 5 | dbt for v1 | **Skip.** Plain SQL view in Phase 7b. Reconsider only if a downstream consumer asks for it. |
+| 6 | Phase 9 cutover authorisation | Operator (the user) signs off. |
+| 7 | Note body source | `Libr_Note` when non-empty; literally blank/NULL otherwise. No fallback template. The file IS the payload; the note is the carrier. |
+| 8 | Owner resolution | **Confirmed** — carry `Libr_CreatedBy` / `Libr_UpdatedBy` through silver and onto the HubSpot note as `icalps_owner_email` / `icalps_owner_fullname` custom properties, resolving via `staging.stg_owner_resolution` (same table as the Communication R4 work). LIVE_EXECUTE_GATE: properties must exist on `hubspot.notes` before prod cutover. |
+| 9 | Bronze re-extraction cadence | **One-off.** The 5,989-row `files_icalps.csv` IS the migration set. No refresh expected. |
 
-## Open decisions still pending
-
-1. Cutover authorization — who signs off Phase 9 commit-to-prod?
-2. Note body source — confirm `Libr_Note` (when non-empty) over the generic template? Operator preference.
-3. Ownership resolution — should `Libr_CreatedBy` / `Libr_UpdatedBy` be carried into HubSpot as note custom properties (mirroring the R4 owner work on Communication), or skipped for v1?
-4. Bronze re-extraction cadence — one-shot (current 5,989-row CSV is the migration), or do we expect a refreshed bronze before cutover?
-
-Answer 1 before Phase 9. Answers 2–4 before Phase 7a so silver normalisation captures what we want.
+All open decisions resolved. Phase 5 unblocked.
