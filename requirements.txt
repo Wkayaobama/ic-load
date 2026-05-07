@@ -1,10 +1,6 @@
-# IC_Load pipeline — Python dependencies
-#
-# Core runtime (required for all pipeline stages)
-duckdb>=1.5.2,<2
-pandas>=3.0.2,<4
-psycopg2-binary>=2.9.11,<3
-PyYAML>=6.0.3,<7
-
-# Testing
-pytest>=9.0.3,<10
+duckdb
+pandas
+psycopg2-binary
+PyYAML
+pytest
+beautifulsoup4

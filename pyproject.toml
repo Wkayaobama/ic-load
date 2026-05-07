@@ -1,0 +1,55 @@
+# IC_Load — project metadata for uv-managed dependency resolution.
+#
+# Purpose
+# -------
+# Declares the Python deps that every scripts/ops/*.ps1 stage requires.
+# uv reads this file on `uv run`, resolves + installs deps into a project-
+# local .venv/ (gitignored), and invokes the wrapped command inside that env.
+# Bypasses whatever venv the operator may have activated — self-contained.
+#
+# Usage
+# -----
+#   uv run python -m pipeline.runner --entity company --dry-run
+#   uv run --extra dbt dbt build --project-dir dbt
+#
+# Installing uv (one-time prerequisite):
+#   winget install --id=astral-sh.uv         # Windows
+#   brew install uv                          # macOS
+#   curl -LsSf https://astral.sh/uv/install.sh | sh   # Linux
+#
+# The package=false knob under [tool.uv] tells uv to treat this repo as a
+# collection of module packages (pipeline/, context/, sql/) rather than a
+# single publishable distribution. uv resolves dependencies but does NOT
+# try to build a wheel for "ic-load" itself.
+
+[project]
+name            = "ic-load"
+version         = "0.1.0"
+description     = "IC'ALPS → HubSpot migration pipeline (Bronze/Silver/Gold + StackSync)"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "duckdb>=0.9",
+    "pandas>=2.0",
+    "psycopg2-binary>=2.9",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Stage 07 (dbt_build) only. Excluded from the core deps because dbt-core
+# pulls ~20 transitive packages and its pin surface conflicts with pandas.
+# Invoke via: `uv run --extra dbt dbt build ...`
+# Uses dbt-duckdb with postgres_scanner extension for hybrid DuckDB+Postgres.
+dbt = [
+    "dbt-duckdb>=1.7",
+]
+
+# For repo-local tests and type checks.
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.uv]
+# Do not attempt to build/install ic-load itself — only resolve dependencies.
+# Without this, uv defaults to editable-install the project and setuptools
+# fails because there's no declared top-level ic_load package.
+package = false

@@ -1,0 +1,156 @@
+version: 2
+
+models:
+
+  # ---------------------------------------------------------------------------
+  # fct_communication_email_meetings — Email + Meeting activities (Bronze path)
+  # Source: staging.stg_communication (29,150 rows)
+  # Dedup: DISTINCT ON (norm_subject, legacy_contact_id) — one row per thread per contact
+  # ---------------------------------------------------------------------------
+  - name: fct_communication_email_meetings
+    description: >
+      Email (EmailOut/EmailIn) and Meeting activities with a resolved Person_Id.
+      Sources directly from Bronze (staging.stg_communication) to capture contacts
+      that lack a Company_Id anchor (excluded from the Silver view).
+      Thread dedup: Comm_Subject normalised by stripping Re:/Fwd: prefixes;
+      earliest CommunicationId per (norm_subject, contact) is kept.
+      FK columns (legacy_contact_id, legacy_company_id) are resolved downstream
+      via HubSpot API search (API-native pathway).
+    columns:
+      - name: icalps_communication_id
+        tests: [not_null, unique]
+      - name: comm_action
+        tests:
+          - accepted_values:
+              values: ['Meeting', 'EmailOut', 'EmailIn']
+      - name: legacy_contact_id
+        tests: [not_null]
+      - name: norm_subject
+        description: "Comm_Subject with Re:/Fwd:/Tr: prefixes stripped and lowercased"
+
+  # ---------------------------------------------------------------------------
+  # fct_communication_calls — PhoneOut/PhoneIn activities (~5,933 records)
+  # ---------------------------------------------------------------------------
+  - name: fct_communication_calls
+    description: "HubSpot Calls from IC'ALPS PhoneOut/PhoneIn activities"
+    columns:
+      - name: icalps_communication_id
+        tests: [not_null, unique]
+
+      - name: hs_call_direction
+        description: "Call direction (OUTBOUND/INBOUND)"
+        tests:
+          - accepted_values:
+              values: ['OUTBOUND', 'INBOUND']
+              config:
+                where: "hs_call_direction is not null"
+
+      - name: reconciliation_status
+        description: "reconciled | unreconciled"
+        tests:
+          - accepted_values:
+              values: ['reconciled', 'unreconciled']
+
+      - name: associated_company_id
+        description: >
+          HubSpot company record ID (stacksync_record_id_9vpp8v).
+          NULL means legacy Company_Id FK did not resolve to a HubSpot company.
+          High NULL rate = child companies not yet mirrored by StackSync.
+
+      - name: associated_contact_id
+        description: "HubSpot contact record ID (stacksync_record_id_nd85zc)."
+
+  # ---------------------------------------------------------------------------
+  # fct_communication_meetings — Meeting activities (~59,038 records)
+  # ---------------------------------------------------------------------------
+  - name: fct_communication_meetings
+    description: "HubSpot Meetings from IC'ALPS Meeting activities"
+    columns:
+      - name: icalps_communication_id
+        tests: [not_null, unique]
+
+      - name: hs_meeting_title
+        description: "Meeting title from Comm_Subject"
+
+      - name: reconciliation_status
+        tests:
+          - accepted_values:
+              values: ['reconciled', 'unreconciled']
+
+      - name: associated_company_id
+        description: "HubSpot company record ID. NULL = unresolved company FK."
+
+      - name: associated_contact_id
+        description: "HubSpot contact record ID."
+
+  # ---------------------------------------------------------------------------
+  # fct_communication_notes — EmailOut/EmailIn activities (~11,981 records)
+  # ---------------------------------------------------------------------------
+  - name: fct_communication_notes
+    description: "HubSpot Notes from IC'ALPS EmailOut/EmailIn activities"
+    columns:
+      - name: icalps_communication_id
+        tests: [not_null, unique]
+
+      - name: source_comm_action
+        tests:
+          - accepted_values:
+              values: ['EmailOut', 'EmailIn', 'Unknown']
+
+      - name: reconciliation_status
+        tests:
+          - accepted_values:
+              values: ['reconciled', 'unreconciled']
+
+      - name: associated_company_id
+        description: "HubSpot company record ID. NULL = unresolved company FK."
+
+      - name: associated_contact_id
+        description: "HubSpot contact record ID."
+
+  # ---------------------------------------------------------------------------
+  # fct_communication_tasks — ToDo activities (~145 records)
+  # ---------------------------------------------------------------------------
+  - name: fct_communication_tasks
+    description: "HubSpot Tasks from IC'ALPS ToDo activities"
+    columns:
+      - name: icalps_communication_id
+        tests: [not_null, unique]
+
+      - name: hs_task_subject
+        description: "Task subject"
+
+      - name: hs_task_priority
+        description: "Task priority (MEDIUM - not NORMAL)"
+        tests:
+          - accepted_values:
+              values: ['MEDIUM']
+
+      - name: reconciliation_status
+        tests:
+          - accepted_values:
+              values: ['reconciled', 'unreconciled']
+
+      - name: associated_company_id
+        description: "HubSpot company record ID."
+
+  # ---------------------------------------------------------------------------
+  # fct_communication_bridge — company-level communication counts
+  # ---------------------------------------------------------------------------
+  - name: fct_communication_bridge
+    description: >
+      Communication count per legacy_company_id. Used as parent-selection
+      tiebreaker in create_company_hierarchy.py. NULL communication_count
+      for a company = data-quality warning (company FK unresolved).
+    columns:
+      - name: legacy_company_id
+        tests: [not_null, unique]
+
+      - name: communication_count
+        description: "Total communications for this company (>= 1 expected)."
+
+      - name: reconciled_count
+        description: >
+          Communications with a confirmed HubSpot company match.
+          reconciled_count=0 with communication_count>0 means the company
+          FK did not resolve — child company not yet in Gold.

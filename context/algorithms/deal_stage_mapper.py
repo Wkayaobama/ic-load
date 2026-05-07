@@ -1,166 +1,204 @@
-#!/usr/bin/env python3
 """
-Deal Stage Mapper - Map IC'ALPS pipeline+stage+outcome → HubSpot stage IDs
-Updated with CORRECT pipeline IDs from HubSpot export (Feb 2026)
+deal_stage_mapper.py — IC'ALPS pipeline + stage + outcome → HubSpot stage IDs.
 
-Handles BOTH French and English stage names from database.
+This is the canonical module inside ic-load. It was extracted from:
+  ic_load_pipeline/python-ignorethis/deal_stage_mapper.py
+
+The mapping data is the authoritative source (Feb 2026 update from HubSpot export).
+Do NOT modify stage or pipeline IDs without verifying them against the live
+HubSpot portal for account 9201667.
+
+## Usage
+
+    from context.algorithms.deal_stage_mapper import map_deal_stage, DealStageResult
+
+    result = map_deal_stage("Hardware", "01 - Identification", "Perdue")
+    # DealStageResult(pipeline_id=766126206, stage_id=85103758, stage_name="Closed Lost")
+
+## Invariants
+
+- Only the "Hardware" pipeline (766126206) is currently supported.
+- Stage names are accepted in both French and English (normalized internally).
+- Outcome names are accepted in both French and English (normalized internally).
+- Any unmapped combination raises ValueError — never silently produces a wrong ID.
+- The runner passes `business_rules.yaml` deal_stage_mapper.non_negotiable=true;
+  this function enforces that contract.
 """
+from __future__ import annotations
 
-# CORRECTED: Actual HubSpot Pipeline IDs from user-provided mapping (Feb 2026)
-HUBSPOT_HARDWARE_PIPELINE = 766126206  # Icalps_hardware
+from dataclasses import dataclass
 
-# Complete stage mapping based on user-provided IDs (Feb 2026 update)
-# Pipeline: Icalps_hardware (766126206)
-HARDWARE_STAGES = {
-    "Identified": 85103752,
-    "Qualified": 85103753,
-    "Design In": 85103754,
-    "Design Win": 85103756,
-    "Closed Won": 85103757,
-    "Closed Lost": 85103758,
+
+# ──────────────────────────────────────────────────────────────────────────────
+# HubSpot pipeline and stage IDs (verified Feb 2026, account 9201667)
+# ──────────────────────────────────────────────────────────────────────────────
+
+HUBSPOT_HARDWARE_PIPELINE_ID: int = 766126206  # Icalps_hardware
+
+HARDWARE_STAGE_IDS: dict[str, int] = {
+    "Identified":   85103752,
+    "Qualified":    85103753,
+    "Design In":    85103754,
+    "Design Win":   85103756,
+    "Closed Won":   85103757,
+    "Closed Lost":  85103758,
 }
 
-# Stage name normalization (handle both French and English)
-STAGE_NORMALIZATION = {
-    # English names (from database)
-    "Identification": "01 - Identification",
-    "Qualified": "02 - Qualifiée",
-    "Evaluation technique": "03 - Evaluation technique",
-    "Construction offre": "04 - Construction propositions",
-    "Negotiating": "05 - Négociations",
+# ──────────────────────────────────────────────────────────────────────────────
+# Normalization tables (accept French and English labels from the database)
+# ──────────────────────────────────────────────────────────────────────────────
 
-    # French names (from original schema)
-    "01 - Identification": "01 - Identification",
-    "02 - Qualifiée": "02 - Qualifiée",
-    "03 - Evaluation technique": "03 - Evaluation technique",
-    "04 - Construction propositions": "04 - Construction propositions",
-    "05 - Négociations": "05 - Négociations",
+_STAGE_NORMALIZATION: dict[str, str] = {
+    # English (legacy export labels)
+    "Identification":           "01 - Identification",
+    "Qualified":                "02 - Qualifiée",
+    "Evaluation technique":     "03 - Evaluation technique",
+    "Construction offre":       "04 - Construction propositions",
+    "Negotiating":              "05 - Négociations",
+    # French (original schema labels)
+    "01 - Identification":                "01 - Identification",
+    "02 - Qualifiée":                     "02 - Qualifiée",
+    "03 - Evaluation technique":          "03 - Evaluation technique",
+    "04 - Construction propositions":     "04 - Construction propositions",
+    "05 - Négociations":                  "05 - Négociations",
 }
 
-# Outcome normalization (handle both French and English)
-OUTCOME_NORMALIZATION = {
+_OUTCOME_NORMALIZATION: dict[str, str] = {
     # English
-    "NoGo": "No-go",
-    "Abandonne": "Abandonnée",
-    "In Progress": "En cours",
-    "Lost": "Perdue",
-    "Won": "Gagnée",
-
+    "NoGo":         "No-go",
+    "Abandonne":    "Abandonnée",
+    "In Progress":  "En cours",
+    "Lost":         "Perdue",
+    "Won":          "Gagnée",
     # French
-    "No-go": "No-go",
-    "Abandonnée": "Abandonnée",
-    "En cours": "En cours",
-    "Perdue": "Perdue",
-    "Gagnée": "Gagnée",
+    "No-go":        "No-go",
+    "Abandonnée":   "Abandonnée",
+    "En cours":     "En cours",
+    "Perdue":       "Perdue",
+    "Gagnée":       "Gagnée",
 }
 
-# IC'ALPS Stage + Outcome → HubSpot Stage Name mapping
-# UPDATED: Feb 2026 - New stage IDs from user requirements
-STAGE_OUTCOME_TO_HUBSPOT = {
-    # Hardware Pipeline mappings (pipeline 766126206)
+# ──────────────────────────────────────────────────────────────────────────────
+# Mapping: (pipeline, normalized_stage, normalized_outcome) → HubSpot stage name
+# ──────────────────────────────────────────────────────────────────────────────
+
+_STAGE_OUTCOME_MAP: dict[tuple[str, str, str], str] = {
     # 01 - Identification
-    ("Hardware", "01 - Identification", "No-go"): "Closed Lost",
-    ("Hardware", "01 - Identification", "Abandonnée"): "Closed Lost",
-    ("Hardware", "01 - Identification", "En cours"): "Identified",
-    ("Hardware", "01 - Identification", "Perdue"): "Closed Lost",
-    ("Hardware", "01 - Identification", "Gagnée"): "Closed Won",
-
+    ("Hardware", "01 - Identification", "No-go"):       "Closed Lost",
+    ("Hardware", "01 - Identification", "Abandonnée"):  "Closed Lost",
+    ("Hardware", "01 - Identification", "En cours"):    "Identified",
+    ("Hardware", "01 - Identification", "Perdue"):      "Closed Lost",
+    ("Hardware", "01 - Identification", "Gagnée"):      "Closed Won",
     # 02 - Qualifiée
-    ("Hardware", "02 - Qualifiée", "No-go"): "Closed Lost",
-    ("Hardware", "02 - Qualifiée", "Abandonnée"): "Closed Lost",
-    ("Hardware", "02 - Qualifiée", "En cours"): "Qualified",
-    ("Hardware", "02 - Qualifiée", "Perdue"): "Closed Lost",
-    ("Hardware", "02 - Qualifiée", "Gagnée"): "Closed Won",
-
+    ("Hardware", "02 - Qualifiée", "No-go"):            "Closed Lost",
+    ("Hardware", "02 - Qualifiée", "Abandonnée"):       "Closed Lost",
+    ("Hardware", "02 - Qualifiée", "En cours"):         "Qualified",
+    ("Hardware", "02 - Qualifiée", "Perdue"):           "Closed Lost",
+    ("Hardware", "02 - Qualifiée", "Gagnée"):           "Closed Won",
     # 03 - Evaluation technique
-    ("Hardware", "03 - Evaluation technique", "No-go"): "Closed Lost",
-    ("Hardware", "03 - Evaluation technique", "Abandonnée"): "Closed Lost",
-    ("Hardware", "03 - Evaluation technique", "En cours"): "Design In",
-    ("Hardware", "03 - Evaluation technique", "Perdue"): "Closed Lost",
-    ("Hardware", "03 - Evaluation technique", "Gagnée"): "Closed Won",
-
+    ("Hardware", "03 - Evaluation technique", "No-go"):       "Closed Lost",
+    ("Hardware", "03 - Evaluation technique", "Abandonnée"):  "Closed Lost",
+    ("Hardware", "03 - Evaluation technique", "En cours"):    "Design In",
+    ("Hardware", "03 - Evaluation technique", "Perdue"):      "Closed Lost",
+    ("Hardware", "03 - Evaluation technique", "Gagnée"):      "Closed Won",
     # 04 - Construction propositions
-    ("Hardware", "04 - Construction propositions", "No-go"): "Closed Lost",
-    ("Hardware", "04 - Construction propositions", "Abandonnée"): "Closed Lost",
-    ("Hardware", "04 - Construction propositions", "En cours"): "Design In",
-    ("Hardware", "04 - Construction propositions", "Perdue"): "Closed Lost",
-    ("Hardware", "04 - Construction propositions", "Gagnée"): "Closed Won",
-
+    ("Hardware", "04 - Construction propositions", "No-go"):       "Closed Lost",
+    ("Hardware", "04 - Construction propositions", "Abandonnée"):  "Closed Lost",
+    ("Hardware", "04 - Construction propositions", "En cours"):    "Design In",
+    ("Hardware", "04 - Construction propositions", "Perdue"):      "Closed Lost",
+    ("Hardware", "04 - Construction propositions", "Gagnée"):      "Closed Won",
     # 05 - Négociations
-    ("Hardware", "05 - Négociations", "No-go"): "Closed Lost",
-    ("Hardware", "05 - Négociations", "Abandonnée"): "Closed Lost",
-    ("Hardware", "05 - Négociations", "En cours"): "Design Win",
-    ("Hardware", "05 - Négociations", "Perdue"): "Closed Lost",
-    ("Hardware", "05 - Négociations", "Gagnée"): "Closed Won",
+    ("Hardware", "05 - Négociations", "No-go"):       "Closed Lost",
+    ("Hardware", "05 - Négociations", "Abandonnée"):  "Closed Lost",
+    ("Hardware", "05 - Négociations", "En cours"):    "Design Win",
+    ("Hardware", "05 - Négociations", "Perdue"):      "Closed Lost",
+    ("Hardware", "05 - Négociations", "Gagnée"):      "Closed Won",
 }
 
 
-def map_deal_stage(pipeline: str, stage: str, outcome: str) -> tuple:
-    """
-    Map IC'ALPS pipeline+stage+outcome to HubSpot pipeline ID and stage ID.
+@dataclass(frozen=True)
+class DealStageResult:
+    """Resolved HubSpot pipeline and stage identifiers."""
+    pipeline_id: int
+    stage_id: int
+    stage_name: str
+
+
+def normalize_stage(stage: str) -> str | None:
+    """Return the canonical IC'ALPS stage label or None if unknown."""
+    return _STAGE_NORMALIZATION.get(stage)
+
+
+def normalize_outcome(outcome: str) -> str | None:
+    """Return the canonical IC'ALPS outcome label or None if unknown."""
+    return _OUTCOME_NORMALIZATION.get(outcome)
+
+
+def map_deal_stage(pipeline: str, stage: str, outcome: str) -> DealStageResult:
+    """Map IC'ALPS pipeline + stage + outcome → HubSpot pipeline_id and stage_id.
 
     Args:
-        pipeline: "Hardware" or "Software"
-        stage: IC'ALPS stage (English or French)
-        outcome: IC'ALPS outcome (English or French)
+        pipeline: "Hardware" (only supported value)
+        stage:    IC'ALPS stage label (French or English accepted)
+        outcome:  IC'ALPS outcome label (French or English accepted)
 
     Returns:
-        Tuple of (pipeline_id, stage_id, stage_name)
+        DealStageResult with pipeline_id, stage_id, stage_name.
 
     Raises:
-        ValueError: If combination not found in mapping
+        ValueError: For any unknown stage, outcome, or combination.
+                    Never silently produces a wrong ID.
     """
-    # Normalize stage name (handle both English and French)
-    normalized_stage = STAGE_NORMALIZATION.get(stage)
-    if not normalized_stage:
-        raise ValueError(f"Unknown stage: {stage}")
-
-    # Normalize outcome (handle both English and French)
-    normalized_outcome = OUTCOME_NORMALIZATION.get(outcome)
-    if not normalized_outcome:
-        raise ValueError(f"Unknown outcome: {outcome}")
-
-    # Get HubSpot stage name
-    key = (pipeline, normalized_stage, normalized_outcome)
-    if key not in STAGE_OUTCOME_TO_HUBSPOT:
+    norm_stage = normalize_stage(stage)
+    if norm_stage is None:
         raise ValueError(
-            f"Unknown stage combination: pipeline={pipeline}, stage={normalized_stage}, outcome={normalized_outcome}"
+            f"Unknown IC'ALPS stage: {stage!r}. "
+            f"Known stages: {list(_STAGE_NORMALIZATION.keys())}"
         )
 
-    hubspot_stage_name = STAGE_OUTCOME_TO_HUBSPOT[key]
+    norm_outcome = normalize_outcome(outcome)
+    if norm_outcome is None:
+        raise ValueError(
+            f"Unknown IC'ALPS outcome: {outcome!r}. "
+            f"Known outcomes: {list(_OUTCOME_NORMALIZATION.keys())}"
+        )
 
-    # Get pipeline ID and stage ID
+    key = (pipeline, norm_stage, norm_outcome)
+    if key not in _STAGE_OUTCOME_MAP:
+        raise ValueError(
+            f"No mapping found for combination: pipeline={pipeline!r}, "
+            f"stage={norm_stage!r}, outcome={norm_outcome!r}"
+        )
+
+    hs_stage_name = _STAGE_OUTCOME_MAP[key]
+
     if pipeline == "Hardware":
-        pipeline_id = HUBSPOT_HARDWARE_PIPELINE
-        if hubspot_stage_name not in HARDWARE_STAGES:
-            raise ValueError(f"Stage '{hubspot_stage_name}' not found in Hardware pipeline")
-        stage_id = HARDWARE_STAGES[hubspot_stage_name]
-    else:
-        raise ValueError(f"Unknown pipeline: {pipeline} (only Hardware pipeline supported with new IDs)")
+        pipeline_id = HUBSPOT_HARDWARE_PIPELINE_ID
+        stage_id = HARDWARE_STAGE_IDS.get(hs_stage_name)
+        if stage_id is None:
+            raise ValueError(
+                f"Stage name {hs_stage_name!r} not found in Hardware pipeline stage IDs. "
+                f"Known names: {list(HARDWARE_STAGE_IDS.keys())}"
+            )
+        return DealStageResult(pipeline_id=pipeline_id, stage_id=stage_id, stage_name=hs_stage_name)
 
-    return (pipeline_id, stage_id, hubspot_stage_name)
+    raise ValueError(
+        f"Unknown pipeline: {pipeline!r}. Only 'Hardware' is currently supported."
+    )
 
 
 def list_all_mappings() -> list[dict]:
-    """Return all stage mappings as a list of dicts for seed generation.
-
-    Keys: icalps_pipeline, icalps_stage, icalps_outcome,
-          hubspot_pipeline_id, hubspot_stage_id, hubspot_stage_name
-    """
-    result = []
-    for (pipeline, stage, outcome), hubspot_stage_name in STAGE_OUTCOME_TO_HUBSPOT.items():
-        if pipeline == "Hardware":
-            pipeline_id = HUBSPOT_HARDWARE_PIPELINE
-            stage_id = HARDWARE_STAGES.get(hubspot_stage_name)
-        else:
-            pipeline_id = None
-            stage_id = None
-        result.append({
+    """Return all supported combinations as a list of dicts (useful for validation SQL generation)."""
+    rows = []
+    for (pipeline, stage, outcome), hs_stage in _STAGE_OUTCOME_MAP.items():
+        pipeline_id = HUBSPOT_HARDWARE_PIPELINE_ID if pipeline == "Hardware" else None
+        stage_id = HARDWARE_STAGE_IDS.get(hs_stage)
+        rows.append({
             "icalps_pipeline": pipeline,
             "icalps_stage": stage,
             "icalps_outcome": outcome,
             "hubspot_pipeline_id": pipeline_id,
             "hubspot_stage_id": stage_id,
-            "hubspot_stage_name": hubspot_stage_name,
+            "hubspot_stage_name": hs_stage,
         })
-    return result
+    return rows

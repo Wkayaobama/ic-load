@@ -25,7 +25,7 @@ class _StopValidator:
         return False
 
 
-def test_warning_only_probe_reaches_dbt_gold_sync_and_assoc():
+def test_warning_only_probe_reaches_dbt_and_stops_at_gold():
     tmp_path = Path.cwd() / "artifacts" / "test_probe_warning"
     tmp_path.mkdir(parents=True, exist_ok=True)
     hooks = make_probe_hooks(warning_only=True)
@@ -34,24 +34,32 @@ def test_warning_only_probe_reaches_dbt_gold_sync_and_assoc():
             entity="company",
             dry_run=False,
             probe_mode=True,
+            enable_dedupe_guard=True,
             hooks=hooks,
             bronze_csv_override="probe.csv",
         )
 
     stages = [entry["to"] for entry in ctx.history]
-    assert "ENTITY_POSTPROCESS_PRE" in stages
+    assert "DBT_BUILD" in stages
+    assert "DEDUPE_GUARD" in stages
+    assert "GOLD_VALIDATE" in stages
     assert "GOLD_UPSERT" in stages
-    assert "STACKSYNC_SYNC" in stages
-    assert "ASSOC_VALIDATE" in stages
-    assert stages.index("GOLD_UPSERT") < stages.index("STACKSYNC_SYNC") < stages.index("ASSOC_VALIDATE")
+    assert "STACKSYNC_SYNC" not in stages
+    assert "ASSOC_VALIDATE" not in stages
+    assert stages.index("DEDUPE_GUARD") < stages.index("GOLD_VALIDATE") < stages.index("GOLD_UPSERT")
 
     silver_record = next(entry for entry in ctx.history if entry["to"] == "SILVER_VALIDATE")
     assert silver_record["status"] == "WARNING"
+    gold_validate_record = next(entry for entry in ctx.history if entry["to"] == "GOLD_VALIDATE")
+    assert gold_validate_record["status"] == "SKIPPED"
+    assert gold_validate_record["details"]["reason"] == "probe_mode"
+    complete_record = next(entry for entry in ctx.history if entry["to"] == "COMPLETE")
+    assert complete_record["details"]["reason"] == "gold_upsert_stop"
 
     assert (tmp_path / f"pipeline_run_company_{ctx.run_id}.json").exists()
 
 
-def test_stop_validation_prevents_dbt_gold_sync_and_assoc():
+def test_stop_validation_prevents_dbt_and_gold():
     tmp_path = Path.cwd() / "artifacts" / "test_probe_stop"
     tmp_path.mkdir(parents=True, exist_ok=True)
     probe_hooks = make_probe_hooks()
@@ -59,8 +67,7 @@ def test_stop_validation_prevents_dbt_gold_sync_and_assoc():
         bronze_loader_factory=probe_hooks.bronze_loader_factory,
         silver_normaliser_factory=probe_hooks.silver_normaliser_factory,
         silver_validator_factory=_StopValidator,
-        pg_functions_installer=probe_hooks.pg_functions_installer,
-        entity_postprocessor=probe_hooks.entity_postprocessor,
+        dbt_runner=probe_hooks.dbt_runner,
         dedupe_guarder=probe_hooks.dedupe_guarder,
         gold_upserter=probe_hooks.gold_upserter,
         sync_waiter=probe_hooks.sync_waiter,
@@ -98,7 +105,7 @@ def test_resume_from_silver_normalise_skips_bronze_stages():
     assert {"BRONZE_LOAD", "BRONZE_METADATA", "BRONZE_WATERMARK", "BRONZE_EXPORT"}.issubset(skipped)
 
 
-def test_communication_probe_reaches_sync_before_associations():
+def test_communication_probe_stops_at_gold_by_default():
     tmp_path = Path.cwd() / "artifacts" / "test_probe_communication"
     tmp_path.mkdir(parents=True, exist_ok=True)
     hooks = make_probe_hooks()
@@ -111,4 +118,135 @@ def test_communication_probe_reaches_sync_before_associations():
         )
 
     stages = [entry["to"] for entry in ctx.history]
-    assert stages.index("STACKSYNC_SYNC") < stages.index("ASSOC_VALIDATE")
+    assert "GOLD_VALIDATE" in stages
+    assert "STACKSYNC_SYNC" not in stages
+    assert "ASSOC_VALIDATE" not in stages
+    assert "GOLD_UPSERT" in stages
+    dedupe_record = next(entry for entry in ctx.history if entry["to"] == "DEDUPE_GUARD")
+    assert dedupe_record["status"] == "SKIPPED"
+    assert dedupe_record["details"]["reason"] == "not_enabled"
+
+
+def test_probe_warning_only_dedupe_still_allows_gold_stage():
+    tmp_path = Path.cwd() / "artifacts" / "test_probe_dedupe_warning"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    hooks = make_probe_hooks(warning_only=True)
+    with patch("pipeline.state.ARTIFACTS_DIR", tmp_path):
+        ctx = run(
+            entity="contact",
+            probe_mode=True,
+            enable_dedupe_guard=True,
+            hooks=hooks,
+            bronze_csv_override="probe.csv",
+        )
+
+    dedupe_record = next(entry for entry in ctx.history if entry["to"] == "DEDUPE_GUARD")
+    assert dedupe_record["status"] == "WARNING"
+    stages = [entry["to"] for entry in ctx.history]
+    assert stages.index("DEDUPE_GUARD") < stages.index("GOLD_VALIDATE") < stages.index("GOLD_UPSERT")
+
+
+def test_dedupe_block_prevents_gold_stage():
+    tmp_path = Path.cwd() / "artifacts" / "test_probe_dedupe_block"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    probe_hooks = make_probe_hooks()
+    hooks = PipelineHooks(
+        bronze_loader_factory=probe_hooks.bronze_loader_factory,
+        silver_normaliser_factory=probe_hooks.silver_normaliser_factory,
+        silver_validator_factory=probe_hooks.silver_validator_factory,
+        dbt_runner=probe_hooks.dbt_runner,
+        dedupe_guarder=lambda entity, dry_run: {
+            "entity": entity,
+            "mode": "probe",
+            "block_count": 2,
+            "review_count": 0,
+            "safe_count": 0,
+            "artifact_json": "dedupe_block.json",
+        },
+        gold_upserter=probe_hooks.gold_upserter,
+        sync_waiter=probe_hooks.sync_waiter,
+        association_runner=probe_hooks.association_runner,
+    )
+
+    with patch("pipeline.state.ARTIFACTS_DIR", tmp_path):
+        with pytest.raises(RuntimeError, match="FAILED"):
+            run(
+                entity="company",
+                probe_mode=True,
+                enable_dedupe_guard=True,
+                hooks=hooks,
+                bronze_csv_override="probe.csv",
+            )
+
+
+def test_live_mode_requires_explicit_gold_validation():
+    tmp_path = Path.cwd() / "artifacts" / "test_probe_gold_validation"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    hooks = make_probe_hooks()
+    with patch("pipeline.state.ARTIFACTS_DIR", tmp_path):
+        with pytest.raises(RuntimeError, match="explicit_gold_validation_required"):
+            run(
+                entity="company",
+                probe_mode=False,
+                hooks=hooks,
+                bronze_csv_override="probe.csv",
+            )
+
+
+def test_live_mode_gold_can_run_after_explicit_validation():
+    tmp_path = Path.cwd() / "artifacts" / "test_probe_gold_validation_approved"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    hooks = make_probe_hooks()
+    with patch("pipeline.state.ARTIFACTS_DIR", tmp_path):
+        ctx = run(
+            entity="company",
+            probe_mode=False,
+            approve_gold=True,
+            hooks=hooks,
+            bronze_csv_override="probe.csv",
+        )
+
+    gold_validate_record = next(entry for entry in ctx.history if entry["to"] == "GOLD_VALIDATE")
+    assert gold_validate_record["status"] == "SUCCESS"
+    assert gold_validate_record["details"]["reason"] == "explicit_gold_validation_received"
+    assert "GOLD_UPSERT" in [entry["to"] for entry in ctx.history]
+    dedupe_record = next(entry for entry in ctx.history if entry["to"] == "DEDUPE_GUARD")
+    assert dedupe_record["status"] == "SKIPPED"
+    assert dedupe_record["details"]["reason"] == "not_enabled"
+
+
+def test_live_mode_dedupe_guard_stays_probe_only():
+    tmp_path = Path.cwd() / "artifacts" / "test_probe_dedupe_probe_only"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    hooks = make_probe_hooks()
+    with patch("pipeline.state.ARTIFACTS_DIR", tmp_path):
+        ctx = run(
+            entity="company",
+            probe_mode=False,
+            approve_gold=True,
+            enable_dedupe_guard=True,
+            hooks=hooks,
+            bronze_csv_override="probe.csv",
+        )
+
+    dedupe_record = next(entry for entry in ctx.history if entry["to"] == "DEDUPE_GUARD")
+    assert dedupe_record["status"] == "SKIPPED"
+    assert dedupe_record["details"]["reason"] == "probe_only_guardrail"
+
+
+def test_enable_post_gold_allows_sync_and_associations():
+    tmp_path = Path.cwd() / "artifacts" / "test_probe_post_gold"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    hooks = make_probe_hooks()
+    with patch("pipeline.state.ARTIFACTS_DIR", tmp_path):
+        ctx = run(
+            entity="company",
+            probe_mode=True,
+            enable_post_gold=True,
+            enable_dedupe_guard=True,
+            hooks=hooks,
+            bronze_csv_override="probe.csv",
+        )
+
+    stages = [entry["to"] for entry in ctx.history]
+    assert stages.index("GOLD_VALIDATE") < stages.index("GOLD_UPSERT") < stages.index("STACKSYNC_SYNC") < stages.index("ASSOC_VALIDATE")

@@ -58,9 +58,15 @@ def make_probe_hooks(*, warning_only: bool = False) -> PipelineHooks:
         bronze_loader_factory=_ProbeBronzeLoader,
         silver_normaliser_factory=_ProbeNormaliser,
         silver_validator_factory=lambda: _ProbeValidator(warning_only=warning_only),
-        pg_functions_installer=lambda dry_run: {"installed": [], "duration_s": 0},
-        entity_postprocessor=lambda entity, phase, dry_run: {"mode": "not_applicable"},
-        dedupe_guarder=lambda entity, dry_run: {},
+        dbt_runner=lambda entity, dry_run: True,
+        dedupe_guarder=lambda entity, dry_run: {
+            "entity": entity,
+            "mode": "probe",
+            "block_count": 0,
+            "review_count": 1 if warning_only else 0,
+            "safe_count": 2,
+            "artifact_json": "probe_dedupe.json",
+        },
         gold_upserter=lambda entity, dry_run: {"entity": entity, "mode": "probe", "statements": [{"file": "probe.sql"}]},
         sync_waiter=lambda entity, dry_run: {"entity": entity, "synced": True, "mode": "probe"},
         association_runner=lambda entity, dry_run: {"entity": entity, "mode": "probe", "statements": [{"file": "probe_assoc.sql"}]},
@@ -70,11 +76,12 @@ def make_probe_hooks(*, warning_only: bool = False) -> PipelineHooks:
 
 
 def run_orchestration_probe(entity: str = "company", *, warning_only: bool = False) -> Any:
-    """Exercise the full stage contract without requiring a live database or StackSync sync."""
+    """Exercise the default clean stage contract without requiring live external writes."""
     return run(
         entity=entity,
         dry_run=False,
         probe_mode=True,
+        enable_post_gold=False,
         hooks=make_probe_hooks(warning_only=warning_only),
         bronze_csv_override="probe.csv",
     )

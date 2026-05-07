@@ -1,0 +1,39 @@
+name: 'ic_load_communication'
+version: '1.0.0'
+config-version: 2
+profile: 'ic_load_duckdb_postgres'
+
+# Project paths
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+# Clean artifacts
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Project variables
+vars:
+  bronze_communication_path: '../../bronze_layer/Bronze_Communication.csv'
+  target_schema: 'staging'
+
+# Model configurations
+models:
+  ic_load_communication:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: ephemeral
+    marts:
+      +materialized: table
+      +database: pg_hubspot
+      +schema: staging
+
+# Use custom schema name directly without prefix
+dispatch:
+  - macro_namespace: dbt
+    search_order: ['ic_load_communication', 'dbt']

@@ -103,3 +103,41 @@ def clean_text_fields(record: Mapping[str, Any], field_names: Iterable[str]) -> 
     for field_name in field_names:
         cleaned[field_name] = clean_text_utf8(cleaned.get(field_name))
     return cleaned
+
+
+def to_iso8601(value: Any) -> str | None:
+    """Convert a date value to an ISO-8601 UTC string for HubSpot API consumption.
+
+    Accepts:
+      - int / float  — treated as epoch milliseconds (Silver layer convention)
+      - datetime     — psycopg2 returns timestamp columns as datetime objects;
+                       naive datetimes are assumed UTC
+      - str          — returned as-is if already looks like ISO-8601
+
+    Returns None when the input is None, zero epoch, or empty string.
+
+    Examples:
+        to_iso8601(1714737600000)         -> "2024-05-03T12:00:00+00:00"
+        to_iso8601(datetime(2024, 5, 3))  -> "2024-05-03T00:00:00+00:00"
+    """
+    if value is None:
+        return None
+    from datetime import date, datetime, timezone
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    if isinstance(value, date):
+        # psycopg2 returns date (not datetime) when DuckDB materialises
+        # try_strptime('%d/%m/%Y') as a DATE column in Postgres.
+        # Promote to midnight UTC so HubSpot gets a valid ISO-8601 timestamp.
+        dt = datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+        return dt.isoformat()
+    if isinstance(value, (int, float)):
+        if not value:
+            return None
+        dt = datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+        return dt.isoformat()
+    if isinstance(value, str):
+        return value or None
+    return None

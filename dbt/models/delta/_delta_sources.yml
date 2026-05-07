@@ -1,0 +1,61 @@
+version: 2
+
+sources:
+  - name: staging_delta
+    description: "Delta records loaded from incremental extraction (separate from full-extract baseline)"
+    database: pg_hubspot
+    schema: staging
+    tables:
+      - name: stg_delta_company
+        description: "Delta Company records (22 rows, 68 raw columns from SQL Server base table)"
+        columns:
+          - name: Comp_CompanyId
+            description: "Primary key - Company ID"
+          - name: Comp_Name
+            description: "Company name"
+          - name: Comp_Type
+            description: "Company type (Customer, Supplier, Prospect)"
+          - name: Comp_Status
+            description: "Company status"
+          - name: Comp_Source
+            description: "Lead source"
+          - name: Comp_Territory
+            description: "Sales territory"
+          - name: Comp_Revenue
+            description: "Company revenue"
+          - name: Comp_Employees
+            description: "Employee count range"
+          - name: Comp_Sector
+            description: "Industry sector"
+          - name: Comp_WebSite
+            description: "Company website"
+
+      - name: stg_delta_opportunity
+        description: "Delta Opportunity records (88 rows, 55 raw columns from SQL Server base table)"
+        columns:
+          - name: Oppo_OpportunityId
+            description: "Primary key - Opportunity ID"
+          - name: Oppo_PrimaryCompanyId
+            description: "FK to Company"
+          - name: Oppo_PrimaryPersonId
+            description: "FK to Person/Contact"
+          - name: Oppo_Description
+            description: "Opportunity name/description"
+          - name: Oppo_Type
+            description: "Opportunity type (Hardware, Software)"
+          - name: Oppo_Status
+            description: "Status (Open, Closed)"
+          - name: Oppo_Stage
+            description: "Pipeline stage (01-Identification through 05-Negotiations) + outcome"
+          - name: Oppo_Forecast
+            description: "Forecasted deal amount"
+          - name: Oppo_Certainty
+            description: "Deal certainty percentage (0-100)"
+          - name: oppo_cout
+            description: "Deal cost"
+          - name: Oppo_Priority
+            description: "Deal priority"
+          - name: Oppo_TargetClose
+            description: "Target close date"
+          - name: Oppo_ActualClose
+            description: "Actual close date"

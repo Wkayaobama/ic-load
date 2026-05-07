@@ -1,0 +1,10 @@
+# 05_probe_pre — baseline schema snapshot BEFORE silver normalisation and dbt.
+# Emits artifacts/probe_pre_dbt.csv (the canonical baseline).
+$ErrorActionPreference = "Stop"
+Set-Location (Resolve-Path "$PSScriptRoot\..\..")
+
+$out = "artifacts/probe_pre_dbt.csv"
+New-Item -Path (Split-Path $out) -ItemType Directory -Force | Out-Null
+
+uv run python scripts/probe_schemas.py --output $out
+exit $LASTEXITCODE

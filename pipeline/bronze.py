@@ -89,11 +89,9 @@ class DuckDBBronzeLoader:
         prior_exists = False
         try:
             with get_connection() as pg_conn:
-                with pg_conn.cursor() as cur:
-                    cur.execute(f"SELECT * FROM {hash_table}")
-                    rows = cur.fetchall()
-                    col_names = [desc[0] for desc in cur.description]
-            prior_df = pd.DataFrame(rows, columns=col_names)
+                with pg_conn.cursor() as _cur:
+                    _cur.execute(f"SELECT * FROM {hash_table}")
+                    prior_df = pd.DataFrame(_cur.fetchall(), columns=[d[0] for d in _cur.description])
             if not prior_df.empty:
                 self.conn.register("prior_hashes", prior_df)
                 prior_exists = True

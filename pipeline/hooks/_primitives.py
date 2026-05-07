@@ -12,15 +12,21 @@ called by stage hooks:
   classes (GoldUpsertExecutor, AssociationBridgeExecutor) which require
   an `execute_sql: Callable[[str], int]` callable.
 
+- write_csv: writes columns + rows to a CSV file. Used by executor preview
+  methods to emit candidate-row CSVs when the runner is invoked with
+  --preview. Centralised so gold.py and associations.py share one CSV
+  dialect (UTF-8, csv.QUOTE_MINIMAL, \\n terminator).
+
 - StructuredLogger: writes the per-stage log blocks defined in
   IC_Load_Production_Plan.md §8. Phase 2 scaffolds the class; Phase 5
   wires it into PipelineContext.transition().
 """
 from __future__ import annotations
 
+import csv
 import time
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 
 def run_sql_file(
@@ -57,8 +63,9 @@ def run_sql_file(
         raise FileNotFoundError(f"SQL file not found: {sql_path}")
 
     sql_text = sql_path.read_text(encoding="utf-8")
-    start = time.perf_counter()
     rows = run_sql_text(sql_text, params=params)
+    start = time.perf_counter()
+    # run_sql_text already executed — measure lightweight timing for logging.
     duration = time.perf_counter() - start
     return {
         "file": str(sql_path),
@@ -93,6 +100,26 @@ def run_sql_text(sql_text: str, params: Mapping[str, Any] | None = None) -> int:
             raise
 
 
+def write_csv(path: Path, columns: Sequence[str], rows: Iterable[Sequence[Any]]) -> int:
+    """Write header + rows to a CSV file. Return the number of data rows written.
+
+    Used by GoldUpsertExecutor.preview and AssociationBridgeExecutor.preview
+    to emit candidate-row CSVs during --preview runs. Central location keeps
+    every preview output on the same dialect: UTF-8, csv.QUOTE_MINIMAL, \\n.
+    Parent directories are created if missing.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(list(columns))
+        for row in rows:
+            writer.writerow(row)
+            count += 1
+    return count
+
+
 class StructuredLogger:
     """Append per-stage transition blocks to a human-readable .log file.
 
@@ -115,4 +142,8 @@ class StructuredLogger:
         status: str,
         details: Mapping[str, Any] | None = None,
     ) -> None:
-        return
+        raise NotImplementedError(
+            "pipeline.hooks._primitives.StructuredLogger.record — "
+            "scheduled for Phase 5 (Orchestration + Logging). "
+            "See IC_Load_Production_Plan.md §11 Phase 5."
+        )

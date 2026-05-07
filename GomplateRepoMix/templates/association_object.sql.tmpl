@@ -1,0 +1,101 @@
+{{- $schema := datasource "schema" -}}
+{{- $run := datasource "run" -}}
+{{- $objectType := getenv "GOMPLATE_OBJECT_TYPE" -}}
+{{- $targetName := getenv "GOMPLATE_ASSOC_TARGET" -}}
+{{- /* Locate the object pattern in association_object_bridge.supported_patterns */ -}}
+{{- $objectPattern := dict -}}
+{{- range $schema.association_object_bridge.supported_patterns -}}
+  {{- if eq .object_type $objectType -}}
+    {{- $objectPattern = . -}}
+  {{- end -}}
+{{- end -}}
+{{- /* Locate the target config within the object pattern */ -}}
+{{- $targetConfig := dict -}}
+{{- range $objectPattern.targets -}}
+  {{- if eq .name $targetName -}}
+    {{- $targetConfig = . -}}
+  {{- end -}}
+{{- end -}}
+{{- $assocTypeId := index $schema.association_type_ids $targetConfig.assoc_key -}}
+{{- $assocTable := printf "hubspot.associations_%ss_%s" $objectType $targetName -}}
+{{- $goldTable := $objectPattern.gold_table -}}
+{{- $silverTable := $objectPattern.silver_table -}}
+{{- $pkColumn := $objectPattern.pk_column -}}
+{{- $fkColumn := $targetConfig.fk_column -}}
+{{- $targetGoldTable := $targetConfig.gold_table -}}
+{{- $icalpsIdColumn := $targetConfig.icalps_id_column -}}
+{{- $stacksyncCol := $targetConfig.stacksync_column -}}
+-- =============================================================================
+-- Rendered SQL — object association bridge
+-- Object type:        {{ $objectType }}
+-- Association target: {{ $targetName }}
+-- Run ID:             {{ $run.run_id }}
+-- Template:           association_object.sql.tmpl
+--
+-- Invariant: two-pass resolution (Pass A: StackSync UUID, Pass B: legacy icalps_*_id),
+--            NOT EXISTS idempotency guard on both passes,
+--            UNION (not UNION ALL) prevents duplicate pairs across passes.
+--
+-- Source join: {{ $goldTable }} → {{ $silverTable }} on {{ $pkColumn }}
+-- This is a direct-FK pattern — no fct_* bridge table, no unique_id prefix check.
+-- Unlike communication associations, the source is the Gold object table joined
+-- to the Silver assessment table via the IC'ALPS primary key.
+--
+-- ⚠️  association_type_id={{ $assocTypeId }}
+{{- if eq $assocTypeId 0 }}
+-- PLACEHOLDER — type ID not yet confirmed from portal 9201667.
+-- Run: GET /crm/v4/associations/{{ $objectType | strings.ToUpper }}/{{ $targetName | strings.ToUpper }}/labels
+-- Replace the 0 values in schema_context.yaml association_type_ids.{{ $targetConfig.assoc_key }}
+-- then re-run render_associations.sh before executing this SQL.
+{{- end }}
+-- =============================================================================
+
+INSERT INTO {{ $assocTable }} (
+    association_type_id,
+    {{ $targetName }}_id,
+    {{ $objectType }}_id
+)
+-- Pass A: StackSync UUID join
+-- Preferred path. Requires STACKSYNC_SYNC to have completed so that
+-- {{ $stacksyncCol }} is populated in {{ $targetGoldTable }}.
+SELECT DISTINCT
+    {{ $assocTypeId }},
+    target.id,
+    obj.id
+FROM {{ $goldTable }} AS obj
+INNER JOIN {{ $silverTable }} AS stg
+    ON obj.{{ $pkColumn }} = stg.{{ $pkColumn }}
+INNER JOIN {{ $targetGoldTable }} AS target
+    ON stg.{{ $fkColumn }}::text = target.{{ $icalpsIdColumn }}::text
+    AND target.{{ $stacksyncCol }} IS NOT NULL
+WHERE stg.{{ $fkColumn }} IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM {{ $assocTable }} AS assoc
+      WHERE assoc.{{ $objectType }}_id    = obj.id
+        AND assoc.{{ $targetName }}_id    = target.id
+        AND assoc.association_type_id     = {{ $assocTypeId }}
+  )
+
+UNION
+
+-- Pass B: legacy icalps_*_id fallback
+-- Used when StackSync UUID is not yet populated for the target record.
+SELECT DISTINCT
+    {{ $assocTypeId }},
+    target.id,
+    obj.id
+FROM {{ $goldTable }} AS obj
+INNER JOIN {{ $silverTable }} AS stg
+    ON obj.{{ $pkColumn }} = stg.{{ $pkColumn }}
+INNER JOIN {{ $targetGoldTable }} AS target
+    ON stg.{{ $fkColumn }}::text = target.{{ $icalpsIdColumn }}::text
+    AND (target.{{ $stacksyncCol }} IS NULL)
+WHERE stg.{{ $fkColumn }} IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM {{ $assocTable }} AS assoc
+      WHERE assoc.{{ $objectType }}_id    = obj.id
+        AND assoc.{{ $targetName }}_id    = target.id
+        AND assoc.association_type_id     = {{ $assocTypeId }}
+  );

@@ -1,79 +1,164 @@
 from __future__ import annotations
 
-from pathlib import Path
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from context.config import PROJECT_ROOT
-from pipeline.hooks._primitives import run_sql_file
+from context.db import get_connection
 
-_SILVER_SQL_DIR = PROJECT_ROOT / "sql" / "silver"
+# Import standalone legacy normaliser (now bundled in ic-load/legacy/)
+from legacy.silver_normalise import SilverNormaliser as LegacySilverNormaliser
 
-_NORMALISE_SCRIPTS: dict[str, Path] = {
-    "company":       _SILVER_SQL_DIR / "normalise_company.sql",
-    "contact":       _SILVER_SQL_DIR / "normalise_contact.sql",
-    "opportunity":   _SILVER_SQL_DIR / "normalise_opportunity.sql",
-    "communication": _SILVER_SQL_DIR / "normalise_communication.sql",
-}
+# Native company normaliser — preferred over legacy
+_NATIVE_COMPANY_AVAILABLE = False
+try:
+    from pipeline.silver_company import SilverCompanyNormaliser as NativeCompanyNormaliser
+    _NATIVE_COMPANY_AVAILABLE = True
+except ImportError:
+    NativeCompanyNormaliser = None  # type: ignore
+
+# Path to the Case Silver SQL files (self-contained, no legacy dependency)
+_CASE_SQL_DIR = PROJECT_ROOT / "sql" / "case"
 
 
 class SilverNormaliser:
-    """Runs the SQL-based silver normalisation script for an entity.
+    """Thin wrapper around the standalone Silver normaliser.
 
-    Each script reads staging.stg_{entity}, applies transformations via
-    pg UDFs installed at PG_FUNCTIONS_INSTALL, and writes
-    staging.stg_{entity}_normalised.
+    This keeps the validated business logic alive while the clean repo owns the
+    orchestration, SQL rendering, and remote execution surface around it.
 
-    Replaces the legacy Python/DuckDB silver_normalise.py approach.
+    For 'case', the normaliser is self-contained in sql/case/ and does NOT
+    depend on the legacy module — it uses native SQL executed via context.db.
+
+    The legacy normaliser is now bundled in ic-load/legacy/silver_normalise.py
+    for standalone operation (no external repo dependency).
     """
 
-    def __init__(self, entity: str | None = None):
-        self._entity = entity
+    def __init__(self):
+        # Legacy delegate loaded lazily; case entity uses its own path
+        self._legacy_delegate: LegacySilverNormaliser | None = None
 
-    def _run(self, entity: str) -> None:
-        script = _NORMALISE_SCRIPTS.get(entity.lower())
-        if script is None:
-            raise RuntimeError(
-                f"No silver normalisation script for entity {entity!r}. "
-                f"Known entities: {list(_NORMALISE_SCRIPTS)}"
-            )
-        run_sql_file(script)
+    def _ensure_legacy(self) -> None:
+        if self._legacy_delegate is None:
+            self._legacy_delegate = LegacySilverNormaliser()
 
-    def normalise_company(self) -> None:
-        self._run("company")
+    def normalise_case(self) -> dict[str, Any]:
+        """Materialise staging.stg_case_v2 from the Bronze raw stg_cases table.
 
-    def normalise_contact(self) -> None:
-        self._run("contact")
+        Executes sql/case/02_stg_case_v2_materialize.sql directly against the
+        PostgreSQL instance. No legacy module dependency.
 
-    def normalise_opportunity(self) -> None:
-        self._run("opportunity")
+        Returns a summary dict with row_count and column coverage metrics.
+        """
+        sql_path = _CASE_SQL_DIR / "02_stg_case_v2_materialize.sql"
+        if not sql_path.exists():
+            raise RuntimeError(f"Case Silver SQL not found: {sql_path}")
 
-    def normalise_communication(self) -> None:
-        self._run("communication")
+        sql = sql_path.read_text(encoding="utf-8")
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                # The last statement in the file is a SELECT returning coverage metrics
+                try:
+                    row = cur.fetchone()
+                    if row and cur.description is not None:
+                        cols = [desc[0] for desc in cur.description]
+                        return dict(zip(cols, row))
+                except Exception:
+                    pass
+            conn.commit()
+
+        return {"entity": "case", "status": "materialised"}
+
+    def normalise_company(self) -> dict[str, Any]:
+        """Normalise company data using standalone legacy module with algorithm enhancements.
+
+        The legacy module (ic-load/legacy/silver_normalise.py):
+        - Performs full column transformation (Comp_* -> icalps_*)
+        - Applies DuckDB SQL transformations
+        - Integrates context.algorithms.company_siblings for sibling detection
+        - Integrates context.algorithms.phone_normalise for E.164 normalisation
+        - Writes to staging.stg_company_normalised with proper schema
+
+        NOTE: The native SilverCompanyNormaliser in pipeline/silver_company.py is
+        available for future use but doesn't yet perform the full column rename
+        transformation required by the gold layer. Use legacy for production.
+        """
+        self._ensure_legacy()
+        self._legacy_delegate.normalise_company()
+        return {"entity": "company", "status": "success", "source": "legacy_standalone"}
 
     def run_all(self) -> None:
-        for entity in _NORMALISE_SCRIPTS:
-            self._run(entity)
+        """Delegate to legacy normaliser for all non-case entities."""
+        self._ensure_legacy()
+        self._legacy_delegate.run_all()
+
+    def __getattr__(self, item: str) -> Any:
+        self._ensure_legacy()
+        return getattr(self._legacy_delegate, item)
+
+
+@dataclass
+class _ValidationResult:
+    name: str
+    passed: bool
+    severity: str
+    row_count_failing: int
+    notes: str
 
 
 class SilverValidator:
-    """Thin salvage wrapper around the proven legacy Silver validator."""
+    """Silver validator.
 
-    def __init__(self):
-        import importlib.util
-        from types import ModuleType
+    For 'case': runs sql/case/04_silver_validate.sql directly.
+    For all other entities: delegates to the standalone legacy validator.
+    """
 
-        path = PROJECT_ROOT / "validate_silver.py"
-        if not path.exists():
-            raise RuntimeError(f"Legacy validator unavailable: {path}")
-        spec = importlib.util.spec_from_file_location("ic_load_legacy_validate_silver", path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Unable to load legacy validator spec for {path}")
-        module: ModuleType = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        self._delegate = module.SilverValidator()
+    def __init__(self, entity: str = ""):
+        self._entity = entity.lower()
+        self._legacy_delegate: Any = None
+        self.results: list[_ValidationResult] = []
 
-    @property
-    def results(self):
-        return self._delegate.results
+    def _ensure_legacy(self) -> None:
+        if self._legacy_delegate is None:
+            from legacy.validate_silver import SilverValidator as LegacyValidator
+            self._legacy_delegate = LegacyValidator()
 
     def run_checks(self) -> bool:
-        return self._delegate.run_checks()
+        if self._entity == "case":
+            return self._run_case_checks()
+        self._ensure_legacy()
+        result = self._legacy_delegate.run_checks()
+        self.results = list(getattr(self._legacy_delegate, "results", []))
+        return result
+
+    def _run_case_checks(self) -> bool:
+        sql_path = _CASE_SQL_DIR / "04_silver_validate.sql"
+        if not sql_path.exists():
+            raise RuntimeError(f"Case validation SQL not found: {sql_path}")
+
+        sql = sql_path.read_text(encoding="utf-8")
+        self.results = []
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+                cols = [desc[0] for desc in cur.description] if cur.description is not None else []
+
+        for row in rows:
+            d = dict(zip(cols, row))
+            self.results.append(_ValidationResult(
+                name=d["check_name"],
+                passed=bool(d["passed"]),
+                severity=d["severity"],
+                row_count_failing=int(d["row_count_failing"] or 0),
+                notes=d.get("notes", ""),
+            ))
+
+        stop_failures = [r for r in self.results if r.severity == "STOP" and not r.passed]
+        return len(stop_failures) == 0

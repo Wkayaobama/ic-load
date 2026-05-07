@@ -10,50 +10,22 @@ from context.config import ARTIFACTS_DIR, load_thresholds as _load_thresholds
 
 
 class PipelineStage(Enum):
-    """Stage boundaries in the pipeline.
-
-    Enum values are sequential integers (via auto()); ordering in this file
-    determines execution order. The runner uses `stage.value < resume.value`
-    to decide which stages to skip on resume — no hardcoded stage list.
-
-    Order matches IC_Load_Production_Plan.md §5.1 exactly.
-    """
-
-    INIT = auto()                           # 1
-
-    # pg functions — Contract A (§7.6)
-    PG_FUNCTIONS_INSTALL = auto()           # 2
-
-    # Bronze
-    BRONZE_LOAD = auto()                    # 3
-    BRONZE_METADATA = auto()                # 4
-    BRONZE_WATERMARK = auto()               # 5
-    BRONZE_EXPORT = auto()                  # 6
-
-    # Silver
-    SILVER_NORMALISE = auto()               # 7
-    SILVER_VALIDATE = auto()                # 8
-
-    # Entity-specific pre-gold postprocess (MANIFEST-driven)
-    ENTITY_POSTPROCESS_PRE = auto()         # 9
-
-    # Guardrails + Gold
-    DEDUPE_GUARD = auto()                   # 16
-    GOLD_VALIDATE = auto()                  # 17
-    GOLD_UPSERT = auto()                    # 18
-
-    # Sync + Associations
-    STACKSYNC_SYNC = auto()                 # 19
-    ASSOC_VALIDATE = auto()                 # 20
-
-    # Entity-specific post-assoc postprocess (MANIFEST-driven)
-    ENTITY_POSTPROCESS_POST = auto()        # 21
-
-    # Post-run verification (coverage report)
-    POST_RUN_VERIFY = auto()                # 22
-
-    COMPLETE = auto()                       # 23
-    FAILED = auto()                         # 24
+    INIT = auto()
+    PG_FUNCTIONS_INSTALL = auto()
+    BRONZE_LOAD = auto()
+    BRONZE_METADATA = auto()
+    BRONZE_WATERMARK = auto()
+    BRONZE_EXPORT = auto()
+    SILVER_NORMALISE = auto()
+    SILVER_VALIDATE = auto()
+    DBT_BUILD = auto()
+    DEDUPE_GUARD = auto()
+    GOLD_VALIDATE = auto()
+    GOLD_UPSERT = auto()
+    STACKSYNC_SYNC = auto()
+    ASSOC_VALIDATE = auto()
+    COMPLETE = auto()
+    FAILED = auto()
 
 
 class StageStatus(Enum):

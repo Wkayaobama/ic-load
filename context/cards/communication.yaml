@@ -1,0 +1,179 @@
+entity: Communication
+object_type: engagements   # calls + notes + tasks; meetings deferred
+
+medallion:
+  raw: staging.raw_stg_communication           # 77,100 rows
+  bronze: staging.stg_communication            # 29,150 rows (after filtering)
+  silver: staging.stg_communication_normalised # 6,127 rows (with both anchors)
+  dbt_intermediate:
+    - staging: int_communication_classified    # maps Comm_Action → HubSpot activity class
+    - staging: int_communication_reconciled    # attaches resolved StackSync record IDs
+  gold:
+    Calls: hubspot.calls
+    Notes: hubspot.notes
+    Tasks: hubspot.tasks
+    Meetings: hubspot.meetings   # DEFERRED — not part of active association bridge
+
+primary_key:
+  source: Comm_CommunicationId
+  canonical: icalps_communication_id
+  type: bigint
+
+idempotency_key:
+  pattern: "'icalps_' || icalps_communication_id::text"
+  column: unique_id
+  used_in: hubspot.calls, hubspot.notes, hubspot.tasks
+  invariant: "All engagement rows written by this pipeline must have unique_id LIKE 'icalps_%'"
+
+stacksync:
+  note: "Engagements do not have a single stacksync_record_id column. Resolution uses unique_id."
+
+fk_dependencies:
+  - entity: Company
+    violation_policy: WARN
+    staging_fk: stg_communication_normalised.legacy_company_id
+    gold_references: hubspot.companies.icalps_company_id
+  - entity: Contact
+    violation_policy: WARN
+    staging_fk: stg_communication_normalised.legacy_contact_id
+    gold_references: hubspot.contacts.icalps_contact_id
+  - entity: Opportunity
+    violation_policy: WARN
+    staging_fk: stg_communication_normalised.legacy_deal_id
+    gold_references: hubspot.deals.icalps_deal_id
+
+import_order: 4   # All parent entities must be upserted before Communication
+
+anchor_completeness:
+  rule: "Communication without both company AND person anchors is excluded from stg_communication_normalised"
+  live_evidence:
+    total_normalised_rows: 6127
+    rows_with_company: 2440
+    rows_with_person: 5532
+    rows_without_both_anchors: 0   # VERIFIED in live staging snapshot 2026-04-04
+
+hierarchy_unflattening:
+  purpose: QA/probe — not production write path
+  module: unflatten_hierarchy.py (IC_Load root → context/algorithms/ candidate)
+  algorithm: reverse_depth_first
+  levels:
+    Level_000: Company_Name (fillna "Unknown Company")
+    Level_001: Person_FirstName + " " + Person_LastName (fillna "Unknown Person")
+    Level_002: Comm_Subject[:50] + " (#id)" or "Communication #id"
+  node_key: "|".join(path_parts)
+  outputs:
+    - hierarchy_communication.csv  (NodeKey, NodeName, ParentKey, Depth)
+    - hierarchy_tree.json (nested, max_depth=2)
+
+dbt_lineage:
+  int_communication_classified:
+    input: stg_communication_normalised
+    transform: "Comm_Action → hubspot_activity_class (calls/notes/tasks/meetings)"
+    output_cols: [icalps_communication_id, comm_action_raw, hubspot_activity_class, ...]
+  int_communication_reconciled:
+    input: int_communication_classified
+    transform: |
+      Join to hubspot.companies/contacts/deals via legacy IDs.
+      Attach resolved StackSync record IDs as associated_*_id columns.
+    output_cols:
+      - associated_company_id    # UUID from stacksync_record_id_9vpp8v
+      - associated_contact_id    # UUID from stacksync_record_id_nd85zc
+      - associated_deal_id       # UUID from stacksync_record_id_87b7vd
+      - legacy_company_id        # int fallback
+      - legacy_contact_id        # int fallback
+      - legacy_deal_id           # int fallback
+
+association_bridge:
+  pattern: two_pass
+  pass_a:
+    name: UUID join (preferred)
+    condition: "fct.associated_*_id IS NOT NULL"
+    join: "fct.associated_*_id → target.stacksync_record_id_*"
+    prerequisite: STACKSYNC_SYNC must have completed
+  pass_b:
+    name: legacy ID fallback
+    condition: "fct.associated_*_id IS NULL"
+    join: "fct.legacy_*_id → target.icalps_*_id"
+    always_available: true   # populated at GOLD_UPSERT time
+  idempotency: "NOT EXISTS on assoc table for (engagement_id, target_id, association_type_id)"
+  set_operation: UNION   # not UNION ALL — prevents duplicates if row has both UUID and legacy
+
+associations:
+  engagement:
+    - comm_type: Calls
+      target: company
+      association_type_id: 182
+      assoc_table: hubspot.associations_calls_company
+      live_uuid_readiness: "5943/5959 = 99.7%"
+      probe_priority: 1   # PROBE FIRST
+    - comm_type: Calls
+      target: contact
+      association_type_id: 194
+      assoc_table: hubspot.associations_calls_contact
+      live_uuid_readiness: "4756/5959 = 79.8%"
+      probe_priority: 2
+    - comm_type: Notes
+      target: contact
+      association_type_id: 202
+      assoc_table: hubspot.associations_notes_contact
+      live_uuid_readiness: "8510/11994 = 71.0%"
+      probe_priority: 3
+    - comm_type: Notes
+      target: company
+      association_type_id: 190
+      assoc_table: hubspot.associations_notes_company
+      live_uuid_readiness: "1511/11994 = 12.6%"
+      probe_priority: 4
+    - comm_type: Notes
+      target: deal
+      association_type_id: 214
+      assoc_table: hubspot.associations_notes_deal
+      live_uuid_readiness: "246/11994 = 2.1%"
+      probe_priority: 5
+    - comm_type: Tasks
+      target: company
+      association_type_id: 192
+      assoc_table: hubspot.associations_tasks_company
+      live_uuid_readiness: "25/145 = 17.2%"
+      probe_priority: 6
+    - comm_type: Tasks
+      target: contact
+      association_type_id: 204
+      assoc_table: hubspot.associations_tasks_contact
+      live_uuid_readiness: "24/145 = 16.6%"
+      probe_priority: 7
+  deferred:
+    - comm_type: Meetings
+      reason: "99.2% rows unreconciled (58581/59043). Type IDs not confirmed. Do not add until UUID readiness > 50% and type IDs verified from HubSpot portal."
+
+dedup:
+  thresholds:
+    review_score_min: 0.0   # communication dedup is unique_id-based only
+    block_score_min: 1.0
+  scorer: none   # unique_id (icalps_communication_id) is the sole dedup key
+  mcp_fallback: optional   # MCPScorer can be used for note content similarity if needed
+  intra_candidate_checks:
+    - type: duplicate_primary_key
+      field: icalps_communication_id
+      checked_per_mart: [fct_communication_calls, fct_communication_notes, fct_communication_tasks, fct_communication_meetings]
+
+silver_validation:
+  stop_checks:
+    - no_duplicate_icalps_communication_id
+    - no_rows_without_company_and_person_anchors
+    - all_unique_ids_follow_icalps_prefix
+  warn_checks:
+    - fk_legacy_company_id_in_hubspot_companies
+    - fk_legacy_contact_id_in_hubspot_contacts
+    - fk_legacy_deal_id_in_hubspot_deals
+
+pipeline_status:
+  live_push_ready: true   # engagement upsert is production-active
+  association_push_ready: false   # ASSOC_VALIDATE is opt-in via --enable-post-gold
+  blockers:
+    - "ASSOC_VALIDATE requires --enable-post-gold flag and explicit --approve-gold"
+    - "Meetings association type IDs not yet confirmed from HubSpot portal"
+  runner_entity_arg: communication
+  runner_flags:
+    assoc_only: "--assoc-only (skips to ASSOC_VALIDATE when parents already synced)"
+    post_gold: "--enable-post-gold (enables STACKSYNC_SYNC and ASSOC_VALIDATE)"

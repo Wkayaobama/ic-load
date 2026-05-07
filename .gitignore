@@ -1,4 +1,12 @@
 .devcontainer/devcontainer.env
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.egg-info/
+.uv/
+uv.lock
 repomix_bundle/
 rendered_sql/
 *.log

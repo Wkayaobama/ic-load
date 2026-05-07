@@ -1,0 +1,97 @@
+## ENTITY CARD LOAD — STATE BEFORE RENDERING
+
+Entity card: context/cards/company.yaml
+Load this card first. All decisions in this prompt are governed by the card.
+
+Medallion position:
+  Bronze  → staging.stg_company
+  Silver  → staging.stg_company_normalised
+  Gold    → hubspot.companies
+  dbt     → NOT in dbt boundary (direct Bronze→Silver→Gold)
+
+Primary key:  Comp_CompanyId  →  icalps_company_id (bigint)
+StackSync resolution column:  stacksync_record_id_9vpp8v
+FK dependencies:  NONE — Company is first in import order (order=1)
+Cardinality:  Company 1:N Contact, 1:N Opportunity, 1:N Communication,
+              1:N Child Companies (hierarchy)
+
+Dedup scorer:  Levenshtein (context.algorithms.levenshtein.LevenshteinScorer)
+Dedup thresholds:  review ≥ 0.65, block ≥ 0.82
+MCP fallback:  optional (inject MCPScorer for abbreviation-heavy company names)
+
+Pipeline status:  live_push_ready=true
+Runner arg:  --entity company
+
+---
+
+## CONTEXT: You are an IC'ALPS pipeline engineer
+
+You are working on the Silver normalization and Gold upsert layers of a
+StackSync-mirrored PostgreSQL CRM database. The entity card above is the
+canonical state of this entity in the medallion. All SQL you produce must
+be consistent with the field names, key columns, and thresholds in the card.
+
+Hierarchy algorithm: context.algorithms.company_siblings
+  clean_domain(comp_website) → normalized domain for grouping
+  find_plural_domain_groups(staging_df, gold_df) → dict[domain → group_df]
+  select_canonical_parent(group_df, gold_df):
+    Tier 1: Gold-matched row with highest contact_count
+    Tier 2: tie-break minimum comp_companyid
+    Tier 3: no Gold match → unresolved, skip group entirely
+  assign_sibling_indices(group):
+    parent → icalps_sibling_index=0, domain=clean_domain
+    child N → icalps_sibling_index=N, domain="{N}.{clean_domain}"
+  flag_cross_group_candidates(plural_groups, threshold=0.80):
+    Levenshtein similarity between name roots of different domains
+    Returns CrossGroupCandidate list for operator review (NOT auto-merged)
+
+Dedup key fields and weights (from card):
+  comp_website (domain strategy)   → weight 0.45
+  comp_name (levenshtein on root)  → weight 0.35
+  address_city (exact)             → weight 0.10
+  icalps_companyphone (digits)     → weight 0.10
+
+Duplicate prevention rules:
+  _load_status watermark: only NEW or MODIFIED rows
+  INSERT ... ON CONFLICT (icalps_company_id) DO UPDATE
+  clear_subsidiary_associations() before re-association (removes stale 269/270)
+  Contact→child filter: domain ~ '^[0-9]+\.'
+
+---
+
+## QUESTIONS — produce executable SQL for each
+
+1. Write the Gold upsert SQL for hubspot.companies.
+   - Conflict key: icalps_company_id
+   - Filter: _load_status IN ('NEW', 'MODIFIED')
+   - Apply UTF-8 cleaning on comp_name and comp_website in the SELECT
+   - Exclude createdate and stacksync_record_id_9vpp8v from the UPDATE SET clause
+   - Source: staging.stg_company_normalised
+
+2. Write the Silver dedup SQL that detects and resolves duplicate icalps_company_id.
+   Use prefer_record_with_most_metadata: count non-null columns, keep max,
+   tie-break on comp_companyid ASC.
+
+3. Write the SQL that detects plural-domain groups and their candidate parents.
+   Output columns: clean_domain, comp_companyid, comp_name, gold_matched (bool),
+   contact_count, candidate_parent_flag (bool), unresolved_flag (bool).
+   Apply the 3-tier parent selection logic in SQL window functions.
+
+4. Write the Silver validation SQL for STOP checks:
+   (a) no duplicate icalps_company_id
+   (b) no null comp_companyid
+   Return: check_name, passed (bool), severity, row_count_failing.
+
+5. Write the SQL that links contacts to child companies after STACKSYNC_SYNC.
+   Use NOT EXISTS to prevent re-updating already-associated contacts.
+   Apply domain ~ '^[0-9]+\.' child filter.
+
+6. Write the Levenshtein cross-group similarity SQL query that compares company
+   name roots between different domain groups and returns candidate pairs where
+   similarity >= 0.80. Use PostgreSQL's levenshtein() function if available,
+   otherwise approximate with similarity() from pg_trgm extension.
+
+7. State the exact runner CLI invocation for a full Company run including
+   hierarchy creation and contact association:
+     python -m pipeline.runner --entity company ...
+     python create_company_hierarchy.py ...

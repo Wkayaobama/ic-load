@@ -5,17 +5,19 @@ See IC_Load_Production_Plan.md §5.1 for the stage sequence.
 from __future__ import annotations
 
 import argparse
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Callable, Literal
 
 from context.config import (
+    DBT_PROJECT_DIR,
     ENTITIES,
+    dbt_command,
     latest_bronze_path,
     load_business_rules,
     load_entity_resolution_map,
-    load_schema_context,
 )
-from pipeline.hooks import PipelineHooks, build_default_hooks
 from pipeline.state import (
     PipelineContext,
     PipelineStage,
@@ -24,6 +26,100 @@ from pipeline.state import (
     load_thresholds,
     transition,
 )
+
+
+@dataclass
+class PipelineHooks:
+    """Inject the live or probe implementations behind each stage boundary."""
+
+    bronze_loader_factory: Callable[[], Any]
+    silver_normaliser_factory: Callable[[], Any]
+    silver_validator_factory: Callable[[], Any]
+    pg_functions_installer: Callable[[bool], dict[str, Any]]
+    dbt_runner: Callable[[str, bool], bool]
+    dedupe_guarder: Callable[[str, bool], dict[str, Any]]
+    gold_upserter: Callable[[str, bool], dict[str, Any]]
+    sync_waiter: Callable[[str, bool], dict[str, Any]]
+    association_runner: Callable[[str, bool], dict[str, Any]]
+    # Preview hooks: execute SELECT portion read-only, emit candidate-row CSVs.
+    # Used when the runner is invoked with --preview. No hubspot.* writes.
+    gold_previewer: Callable[[str], dict[str, Any]]
+    association_previewer: Callable[[str], dict[str, Any]]
+
+
+def _default_dbt_runner(entity: str, dry_run: bool) -> bool:
+    del entity
+    if dry_run:
+        return True
+    command = dbt_command()
+    if command is None:
+        raise RuntimeError("dbt boundary is not configured. Set ICALPS_DBT_COMMAND or inject a dbt hook.")
+    completed = subprocess.run(command, cwd=DBT_PROJECT_DIR, check=False)
+    return completed.returncode == 0
+
+
+def build_default_hooks() -> PipelineHooks:
+    from context.db import get_connection
+    from pipeline.associations import AssociationBridgeExecutor
+    from pipeline.bronze import DuckDBBronzeLoader
+    from pipeline.dedupe import DedupeGuardrail
+    from pipeline.gold import GoldUpsertExecutor
+    from pipeline.hooks.pg_functions import install as install_pg_functions
+    from pipeline.silver import SilverNormaliser, SilverValidator
+    from pipeline.sync import StackSyncCheckpoint
+
+    # ── Live SQL callables ─────────────────────────────────────────────────
+    # Gold upsert and association bridge both render SQL via sql.render.* and
+    # need an executor to land INSERTs in Postgres. Previously no callable
+    # was passed, so render output was written to disk but never executed —
+    # leaving the pipeline's final step a no-op. These two closures provide:
+    #
+    #   _execute_sql(sql_text) → int       used by .execute(): runs INSERT, returns rowcount
+    #   _execute_sql_fetch(sql_text)       used by .preview(): runs SELECT, returns (columns, rows)
+    #
+    # Both open/commit/close their own transaction; no shared state.
+    def _execute_sql(sql_text: str) -> int:
+        with get_connection() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql_text)
+                    rc = cur.rowcount if cur.rowcount is not None else 0
+                conn.commit()
+                return rc
+            except Exception:
+                conn.rollback()
+                raise
+
+    def _execute_sql_fetch(sql_text: str) -> tuple[list[str], list[tuple]]:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql_text)
+                columns = [d[0] for d in cur.description] if cur.description else []
+                rows = cur.fetchall() if cur.description else []
+        return columns, rows
+
+    dedupe_guardrail = DedupeGuardrail()
+    gold_executor = GoldUpsertExecutor()
+    sync_checkpoint = StackSyncCheckpoint()
+    assoc_executor = AssociationBridgeExecutor()
+
+    return PipelineHooks(
+        bronze_loader_factory=DuckDBBronzeLoader,
+        silver_normaliser_factory=SilverNormaliser,
+        silver_validator_factory=SilverValidator,
+        pg_functions_installer=install_pg_functions,
+        dbt_runner=_default_dbt_runner,
+        dedupe_guarder=lambda entity, dry_run: dedupe_guardrail.execute(entity, dry_run=dry_run),
+        gold_upserter=lambda entity, dry_run: gold_executor.execute(
+            entity, dry_run=dry_run, execute_sql=None if dry_run else _execute_sql
+        ),
+        sync_waiter=lambda entity, dry_run: sync_checkpoint.wait(entity, dry_run=dry_run),
+        association_runner=lambda entity, dry_run: assoc_executor.execute(
+            entity, dry_run=dry_run, execute_sql=None if dry_run else _execute_sql
+        ),
+        gold_previewer=lambda entity: gold_executor.preview(entity, execute_sql_fetch=_execute_sql_fetch),
+        association_previewer=lambda entity: assoc_executor.preview(entity, execute_sql_fetch=_execute_sql_fetch),
+    )
 
 
 def run(
@@ -36,7 +132,10 @@ def run(
     assoc_only: bool = False,
     verbosity: str = "low",
     probe_mode: bool = False,
+    enable_post_gold: bool = False,
     approve_gold: bool = False,
+    enable_dedupe_guard: bool = False,
+    preview: bool = False,
     hooks: PipelineHooks | None = None,
     bronze_csv_override: str | None = None,
 ) -> PipelineContext:
@@ -47,6 +146,10 @@ def run(
     owner_blocking = thresholds.get("owner_resolution_blocking", False)
     ctx.metadata["thresholds"] = thresholds
     ctx.metadata["probe_mode"] = probe_mode
+    ctx.metadata["enable_post_gold"] = enable_post_gold
+    ctx.metadata["approve_gold"] = approve_gold
+    ctx.metadata["enable_dedupe_guard"] = enable_dedupe_guard
+    ctx.metadata["preview"] = preview
     ctx.metadata["entity_resolution_map"] = load_entity_resolution_map()
     ctx.metadata["business_rules"] = load_business_rules()
 
@@ -58,9 +161,12 @@ def run(
             ctx = PipelineContext.from_artifact(artifact)
         _skip_stages_before(ctx, resume_stage)
 
+    if not assoc_only and _should_run(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, resume_stage):
+        _run_pg_functions_install(ctx, dry_run, hooks)
+
     if assoc_only:
         _skip_stages_before(ctx, PipelineStage.ASSOC_VALIDATE)
-        _run_assoc_validate(ctx, entity, dry_run, hooks)
+        _run_assoc_validate(ctx, entity, dry_run, preview, hooks)
         transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS, reason="assoc_only_stop")
         _finish(ctx)
         return ctx
@@ -86,16 +192,20 @@ def run(
         _finish(ctx)
         return ctx
 
-    # Entity-specific pre-gold work (e.g. case materialize view).
-    _run_entity_postprocess(ctx, entity, "pre", dry_run, hooks)
+    # Gold is the default final boundary for the clean runner. StackSync sync and
+    # mirrored associations stay available behind an explicit opt-in.
+    _run_dbt(ctx, entity, dry_run, hooks)
+    _run_dedupe_guard(ctx, entity, dry_run, probe_mode, enable_dedupe_guard, hooks)
+    _run_gold_validate(ctx, entity, dry_run, probe_mode, approve_gold, preview)
+    _run_gold_upsert(ctx, entity, dry_run, preview, hooks)
 
-    _run_dedupe_guard(ctx, entity, dry_run, probe_mode, hooks)
+    if not enable_post_gold:
+        transition(ctx, PipelineStage.COMPLETE, StageStatus.SUCCESS, reason="gold_upsert_stop")
+        _finish(ctx)
+        return ctx
 
-    # Gold gate: requires --approve-gold + pre-gold duplicate check.
-    _run_gold_validate(ctx, entity, dry_run, approve_gold)
-    _run_gold_upsert(ctx, entity, dry_run, hooks)
     _run_stacksync_sync(ctx, entity, dry_run, hooks)
-    _run_assoc_validate(ctx, entity, dry_run, hooks)
+    _run_assoc_validate(ctx, entity, dry_run, preview, hooks)
 
     # Entity-specific post-assoc work (e.g. company hierarchy, comm unflatten).
     _run_entity_postprocess(ctx, entity, "post", dry_run, hooks)
@@ -108,6 +218,26 @@ def run(
     return ctx
 
 
+def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: PipelineHooks) -> None:
+    # Skip in dry_run or preview mode: DDL is unnecessary (03_pg_functions.ps1 already ran),
+    # and parallel execution causes "tuple concurrently updated" conflicts.
+    if dry_run or ctx.metadata.get("preview"):
+        skip_reason = "dry_run" if dry_run else "preview"
+        transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.SKIPPED, reason=skip_reason)
+        return
+    try:
+        result = hooks.pg_functions_installer(dry_run)
+    except Exception as exc:
+        transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.FAILED, reason=str(exc))
+    transition(
+        ctx,
+        PipelineStage.PG_FUNCTIONS_INSTALL,
+        StageStatus.SUCCESS,
+        installed=result.get("count"),
+        duration_s=result.get("duration_s"),
+    )
+
+
 def _run_bronze(
     ctx: PipelineContext,
     entity: str,
@@ -116,6 +246,22 @@ def _run_bronze(
     hooks: PipelineHooks,
     bronze_csv_override: str | None,
 ) -> None:
+    # Dry-run/preview contract: touch nothing. Skip all four BRONZE_* stages as a
+    # block so a fresh clone without bronze_layer co-located can still
+    # validate the stage wiring end-to-end without a CSV lookup or DuckDB
+    # load. Preview mode assumes bronze data already loaded by earlier ops stages.
+    if dry_run or ctx.metadata.get("preview"):
+        skip_reason = "dry_run" if dry_run else "preview"
+        for stage in (
+            PipelineStage.BRONZE_LOAD,
+            PipelineStage.BRONZE_METADATA,
+            PipelineStage.BRONZE_WATERMARK,
+            PipelineStage.BRONZE_EXPORT,
+        ):
+            if _should_run(ctx, stage, resume_stage):
+                transition(ctx, stage, StageStatus.SKIPPED, reason=skip_reason)
+        return
+
     loader = hooks.bronze_loader_factory()
     entity_cfg = ENTITIES.get(entity)
     if entity_cfg is None:
@@ -175,8 +321,10 @@ def _run_silver(
     hooks: PipelineHooks,
 ) -> None:
     if _should_run(ctx, PipelineStage.SILVER_NORMALISE, None):
-        if dry_run:
-            transition(ctx, PipelineStage.SILVER_NORMALISE, StageStatus.SKIPPED, reason="dry_run")
+        # Skip in dry_run or preview mode: normalised tables already exist (validated by 06_silver.ps1)
+        if dry_run or ctx.metadata.get("preview"):
+            skip_reason = "dry_run" if dry_run else "preview"
+            transition(ctx, PipelineStage.SILVER_NORMALISE, StageStatus.SKIPPED, reason=skip_reason)
         else:
             try:
                 normaliser = hooks.silver_normaliser_factory()
@@ -193,6 +341,7 @@ def _run_silver(
         if skip_validation:
             transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SKIPPED, reason="skip_validation_flag")
         elif dry_run:
+            # Validators query Postgres — skip in dry-run to keep it DB-free.
             transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
         else:
             _run_silver_validate(ctx, owner_blocking, verbosity, hooks)
@@ -250,8 +399,10 @@ def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: Pipeli
     """
     if not _should_run(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, None):
         return
-    if dry_run:
-        transition(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, StageStatus.SKIPPED, reason="dry_run")
+    # Skip in dry_run or preview mode: dbt already ran in 07_dbt.ps1
+    if dry_run or ctx.metadata.get("preview"):
+        skip_reason = "dry_run" if dry_run else "preview"
+        transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SKIPPED, reason=skip_reason)
         return
     result = hooks.pg_functions_installer(False)
     transition(
@@ -506,10 +657,85 @@ def _run_gold_validate(
     )
 
 
-def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+def _run_dedupe_guard(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    probe_mode: bool,
+    enable_dedupe_guard: bool,
+    hooks: PipelineHooks,
+) -> None:
+    if not _should_run(ctx, PipelineStage.DEDUPE_GUARD, None):
+        return
+
+    if not enable_dedupe_guard:
+        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="not_enabled")
+        return
+
+    if not (dry_run or probe_mode):
+        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="probe_only_guardrail")
+        return
+
+    result = hooks.dedupe_guarder(entity, dry_run)
+    ctx.metadata["dedupe_guard"] = result
+
+    block_count = int(result.get("block_count", 0))
+    review_count = int(result.get("review_count", 0))
+    not_applicable = result.get("mode") == "not_applicable"
+
+    if not_applicable:
+        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="not_applicable", entity=entity)
+        return
+
+    if block_count > 0:
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            StageStatus.FAILED,
+            block_count=block_count,
+            review_count=review_count,
+            artifact=result.get("artifact_json"),
+        )
+
+    if review_count > 0:
+        status = StageStatus.WARNING if dry_run or probe_mode else StageStatus.FAILED
+        transition(
+            ctx,
+            PipelineStage.DEDUPE_GUARD,
+            status,
+            block_count=block_count,
+            review_count=review_count,
+            safe_count=result.get("safe_count", 0),
+            artifact=result.get("artifact_json"),
+        )
+        return
+
+    transition(
+        ctx,
+        PipelineStage.DEDUPE_GUARD,
+        StageStatus.SUCCESS,
+        block_count=block_count,
+        review_count=review_count,
+        safe_count=result.get("safe_count", 0),
+        artifact=result.get("artifact_json"),
+    )
+
+
+def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, preview: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.GOLD_UPSERT, None):
         return
-    result = hooks.gold_upserter(entity, dry_run)
+    if dry_run:
+        # Dry-run contract: executor .execute() would still render SQL to
+        # sql/rendered/ even with execute_sql=None. Skip the stage entirely
+        # so dry-run produces zero filesystem side effects.
+        transition(ctx, PipelineStage.GOLD_UPSERT, StageStatus.SKIPPED, reason="dry_run")
+        return
+    if preview:
+        # Preview mode: executes SELECT portion read-only, writes candidate
+        # rows to artifacts/ops/gold_preview_*.csv. No hubspot.* INSERT.
+        result = hooks.gold_previewer(entity)
+    else:
+        result = hooks.gold_upserter(entity, dry_run)
     transition(
         ctx,
         PipelineStage.GOLD_UPSERT,
@@ -519,8 +745,56 @@ def _run_gold_upsert(ctx: PipelineContext, entity: str, dry_run: bool, hooks: Pi
     )
 
 
+def _run_gold_validate(
+    ctx: PipelineContext,
+    entity: str,
+    dry_run: bool,
+    probe_mode: bool,
+    approve_gold: bool,
+    preview: bool,
+) -> None:
+    del entity
+    if not _should_run(ctx, PipelineStage.GOLD_VALIDATE, None):
+        return
+
+    if dry_run:
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
+        return
+
+    if probe_mode:
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="probe_mode")
+        return
+
+    if preview:
+        # Preview runs SELECT only; the --approve-gold safety gate is only
+        # meaningful for actual INSERT execution. Skip it in preview mode.
+        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="preview_mode")
+        return
+
+    if not approve_gold:
+        transition(
+            ctx,
+            PipelineStage.GOLD_VALIDATE,
+            StageStatus.FAILED,
+            reason="explicit_gold_validation_required",
+        )
+
+    transition(
+        ctx,
+        PipelineStage.GOLD_VALIDATE,
+        StageStatus.SUCCESS,
+        reason="explicit_gold_validation_received",
+    )
+
+
 def _run_stacksync_sync(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.STACKSYNC_SYNC, None):
+        return
+    # Skip in dry_run or preview mode: StackSync sync checkpoint hits DB to verify
+    # mirror freshness. Skip in preview — we're testing SELECT paths, not sync state.
+    if dry_run or ctx.metadata.get("preview"):
+        skip_reason = "dry_run" if dry_run else "preview"
+        transition(ctx, PipelineStage.STACKSYNC_SYNC, StageStatus.SKIPPED, reason=skip_reason)
         return
     try:
         result = hooks.sync_waiter(entity, dry_run)
@@ -530,10 +804,21 @@ def _run_stacksync_sync(ctx: PipelineContext, entity: str, dry_run: bool, hooks:
     transition(ctx, PipelineStage.STACKSYNC_SYNC, status, **result)
 
 
-def _run_assoc_validate(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+def _run_assoc_validate(ctx: PipelineContext, entity: str, dry_run: bool, preview: bool, hooks: PipelineHooks) -> None:
     if not _should_run(ctx, PipelineStage.ASSOC_VALIDATE, None):
         return
-    result = hooks.association_runner(entity, dry_run)
+    if dry_run:
+        # Dry-run contract: AssociationBridgeExecutor.execute() still renders
+        # SQL to sql/rendered/ even with execute_sql=None. Skip entirely.
+        transition(ctx, PipelineStage.ASSOC_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
+        return
+    if preview:
+        # Preview mode: executes Pass-A-UNION-Pass-B SELECT read-only, writes
+        # candidate associations to artifacts/ops/assoc_preview_*.csv.
+        # No hubspot.associations_*_* INSERT.
+        result = hooks.association_previewer(entity)
+    else:
+        result = hooks.association_runner(entity, dry_run)
     transition(
         ctx,
         PipelineStage.ASSOC_VALIDATE,
@@ -544,19 +829,22 @@ def _run_assoc_validate(ctx: PipelineContext, entity: str, dry_run: bool, hooks:
 
 
 def _skip_stages_before(ctx: PipelineContext, resume_stage: PipelineStage) -> None:
-    """Mark all stages before resume_stage as SKIPPED.
-
-    Iterates PipelineStage in enum-declaration order, comparing by .value.
-    This replaces the previous hardcoded list — adding a new stage to the
-    enum now automatically participates in resume semantics.
-
-    INIT / COMPLETE / FAILED are skipped here — they are terminal or
-    initial sentinels, not resumable work units.
-    """
-    terminal = {PipelineStage.INIT, PipelineStage.COMPLETE, PipelineStage.FAILED}
-    for stage in PipelineStage:
-        if stage in terminal:
-            continue
+    ordered = [
+        PipelineStage.PG_FUNCTIONS_INSTALL,
+        PipelineStage.BRONZE_LOAD,
+        PipelineStage.BRONZE_METADATA,
+        PipelineStage.BRONZE_WATERMARK,
+        PipelineStage.BRONZE_EXPORT,
+        PipelineStage.SILVER_NORMALISE,
+        PipelineStage.SILVER_VALIDATE,
+        PipelineStage.DBT_BUILD,
+        PipelineStage.DEDUPE_GUARD,
+        PipelineStage.GOLD_VALIDATE,
+        PipelineStage.GOLD_UPSERT,
+        PipelineStage.STACKSYNC_SYNC,
+        PipelineStage.ASSOC_VALIDATE,
+    ]
+    for stage in ordered:
         if stage.value < resume_stage.value:
             transition(ctx, stage, StageStatus.SKIPPED, reason="resume")
 
@@ -588,12 +876,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--assoc-only", action="store_true")
     parser.add_argument("--verbosity", choices=["high", "low"], default="low")
     parser.add_argument("--probe-mode", action="store_true")
+    parser.add_argument("--enable-post-gold", action="store_true")
+    parser.add_argument("--approve-gold", action="store_true")
+    parser.add_argument("--enable-dedupe-guard", action="store_true")
     parser.add_argument(
-        "--approve-gold",
+        "--preview",
         action="store_true",
-        help="Required to execute GOLD_UPSERT. Without this flag the pipeline "
-             "stops at GOLD_VALIDATE with reason=explicit_gold_validation_required. "
-             "Pass only after reviewing silver artifacts.",
+        help="Execute SELECT portion of gold upsert / association bridge read-only; "
+             "write candidate rows to artifacts/ops/. No hubspot.* writes. "
+             "Skips --approve-gold gate (only relevant for real INSERTs).",
     )
     parser.add_argument("--bronze-csv-override")
     return parser.parse_args()
@@ -611,6 +902,9 @@ if __name__ == "__main__":
         assoc_only=args.assoc_only,
         verbosity=args.verbosity,
         probe_mode=args.probe_mode,
+        enable_post_gold=args.enable_post_gold,
         approve_gold=args.approve_gold,
+        enable_dedupe_guard=args.enable_dedupe_guard,
+        preview=args.preview,
         bronze_csv_override=args.bronze_csv_override,
     )

@@ -37,15 +37,11 @@ pg_functions:
   - sql/functions/fn_map_contact_status.sql
   - sql/functions/fn_map_country_iso.sql
   - sql/functions/fn_map_lifecycle_stage.sql
-  - sql/functions/fn_map_language_iso.sql
-  - sql/functions/fn_normalize_currency.sql
   # 4 hierarchy functions (silver.fn_*):
   - sql/functions/fn_build_communication_hierarchy.sql
   - sql/functions/fn_build_company_tree.sql
   - sql/functions/fn_traverse_hierarchy.sql
   - sql/functions/fn_get_hierarchy_json.sql
-  # Form workflow — FK chain resolution (StackSync workflow data path)
-  - sql/functions/fn_resolve_association.sql
 
 # Per-entity registration — identifiers, dbt selectors, SQL files,
 # postprocess entries. No stages listed (they are fixed in
@@ -56,6 +52,10 @@ entities:
     primary_key: Comp_CompanyId
     reconciliation_key: icalps_company_id
     stacksync_record_id: stacksync_record_id_9vpp8v
+    dbt_selectors:
+      staging:      "stg_company"
+      intermediate: "int_company_reconciled"
+      marts:        "fct_company_silver"
     sql_files:
       gold_upsert:        sql/company/07_gold_upsert.sql
       association_bridge: sql/company/09_association_bridge.sql
@@ -71,6 +71,10 @@ entities:
     primary_key: Pers_PersonId
     reconciliation_key: icalps_contact_id
     stacksync_record_id: stacksync_record_id_nd85zc
+    dbt_selectors:
+      staging:      "stg_contact"
+      intermediate: "int_contact_reconciled"
+      marts:        "fct_contact_silver"
     sql_files:
       gold_upsert:        sql/contact/07_gold_upsert.sql
       association_bridge: sql/contact/09_association_bridge.sql
@@ -82,16 +86,27 @@ entities:
     primary_key: Oppo_OpportunityId
     reconciliation_key: icalps_deal_id
     stacksync_record_id: stacksync_record_id_87b7vd
+    dbt_selectors:
+      staging:      "stg_opportunity"
+      intermediate: "int_opportunity_reconciled"
+      marts:        "fct_opportunity_silver"
     sql_files:
       gold_upsert:        sql/opportunity/07_gold_upsert.sql
       association_bridge: sql/opportunity/09_association_bridge.sql
       post_run_verify:    sql/opportunity/10_post_run_verify.sql
-    postprocess: {}
+    postprocess:
+      pre:
+        - { type: python, module: pipeline.dedupe, fn: run_probe,
+            note: "Levenshtein probe — probe-mode only" }
 
   communication:
     gold_table: "hubspot.{calls,tasks,notes,meetings}"
     primary_key: Comm_CommunicationId
     reconciliation_key: icalps_communication_id
+    dbt_selectors:
+      staging:      "stg_communication"
+      intermediate: "int_communication_classified int_communication_reconciled"
+      marts:        "tag:communication_marts"
     sql_files:
       gold_upsert:        sql/communication/07_gold_engagement_upsert.sql
       association_bridge: sql/communication/09_association_bridge.sql
@@ -106,6 +121,10 @@ entities:
     gold_table: hubspot.tickets
     primary_key: Case_CaseId
     reconciliation_key: icalps_case_id
+    dbt_selectors:
+      staging:      "stg_case"
+      intermediate: "int_case_reconciled"
+      marts:        "fct_case_silver"
     sql_files:
       gold_upsert:        sql/case/07_gold_upsert.sql
       association_bridge: sql/case/09_association_bridge.sql
@@ -143,6 +162,11 @@ hook_modules:
   BRONZE_WATERMARK:         pipeline/hooks/bronze.py
   BRONZE_EXPORT:            pipeline/hooks/bronze.py
   SILVER_VALIDATE:          pipeline/hooks/silver_validator.py
+  DBT_STAGING:              pipeline/hooks/dbt.py
+  DBT_INTERMEDIATE:         pipeline/hooks/dbt.py
+  DBT_TEST_SILVER:          pipeline/hooks/dbt.py
+  DBT_MARTS:                pipeline/hooks/dbt.py
+  DBT_TEST_MARTS:           pipeline/hooks/dbt.py
   ENTITY_POSTPROCESS_PRE:   pipeline/hooks/entity_postprocess.py
   ENTITY_POSTPROCESS_POST:  pipeline/hooks/entity_postprocess.py
   DEDUPE_GUARD:             pipeline/hooks/dedupe.py

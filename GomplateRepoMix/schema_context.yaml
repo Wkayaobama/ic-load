@@ -71,9 +71,39 @@ entities:
       load_status_column: "_load_status"
       allowed_statuses: ["NEW", "MODIFIED"]
       computed_columns:
-        weighted_forecast: "icalps_forecast::numeric * (icalps_certainty::numeric / 100.0)"
-        net_amount: "icalps_forecast::numeric - icalps_icalps_cost::numeric"
-        net_weighted_amount: "(icalps_forecast::numeric - icalps_icalps_cost::numeric) * (icalps_certainty::numeric / 100.0)"
+        # Column names match stg_opportunity_normalised (probe_post_dbt.csv):
+        # amount (forecast), ic_alps_cost, icalps_oppocertainty
+        weighted_forecast: "stg.amount::numeric * (stg.icalps_oppocertainty::numeric / 100.0)"
+        net_amount: "stg.amount::numeric - COALESCE(stg.ic_alps_cost::numeric, 0)"
+        net_weighted_amount: "(stg.amount::numeric - COALESCE(stg.ic_alps_cost::numeric, 0)) * COALESCE(stg.icalps_oppocertainty::numeric, 0) / 100.0"
+
+  emails_meetings:
+    pathway: api_native
+    schema_version: "1.1.0"
+    object_types: [emails, meetings]
+    source_mart: "staging.fct_communication_email_meetings"
+    ledger_table: "staging.fct_emails_posted"
+    batch_size: 100
+    idempotency_key_pattern:
+      email:   "'icalps_email_' || icalps_communication_id::text"
+      meeting: "'icalps_mtg_'   || icalps_communication_id::text"
+    association_type_ids:
+      email_contact:   198
+      email_company:   186
+      meeting_contact: 200
+      meeting_company: 188
+    fk_resolution:
+      contact: {icalps_prop: icalps_contact_id, hubspot_table: "hubspot.contacts", violation_policy: WARN}
+      company: {icalps_prop: icalps_company_id, hubspot_table: "hubspot.companies", violation_policy: WARN}
+    artifact_schema:
+      entity_key: emails_meetings
+      stages: [LEDGER_BOOTSTRAP, SOURCE_FETCH, FK_RESOLVE, BATCH_POST_EMAILS, BATCH_POST_MEETINGS, PATCH_DATES]
+    runner_contract:
+      import_order: 7
+      mode: standalone
+      approval_gates:
+        - {stage: BATCH_POST_EMAILS,  env_var: ICALPS_APPROVE_EMAIL_POST}
+        - {stage: BATCH_POST_MEETINGS, env_var: ICALPS_APPROVE_MEETING_POST}
 
   Communication:
     idempotency_prefix: "icalps_"
@@ -111,9 +141,23 @@ association_type_ids:
   notes_deal: 214
   tasks_company: 192
   tasks_contact: 204
+  # Ticket association type IDs: TBD — confirm from portal 9201667 before rendering live SQL
+  # GET https://api.hubapi.com/crm/v4/associations/TICKET/COMPANY/labels  → typeId
+  # GET https://api.hubapi.com/crm/v4/associations/TICKET/CONTACT/labels  → typeId
+  # GET https://api.hubapi.com/crm/v4/associations/TICKET/DEAL/labels     → typeId
+  ticket_company: 0    # PLACEHOLDER — replace with confirmed int before live push
+  ticket_contact: 0    # PLACEHOLDER
+  ticket_deal: 0       # PLACEHOLDER
 
 association_bridge:
   idempotency_guard: "NOT EXISTS"
+  # Meetings are explicitly deferred. Reasons:
+  #   1. 58,581 / 59,043 rows (99.2%) have no UUID anchor in live staging (snapshot 2026-04-04)
+  #   2. Association type IDs for meetings_company and meetings_contact are not yet confirmed
+  #      from the live HubSpot portal — do NOT add meetings here until confirmed
+  #   3. Legacy fallback at this scale without UUID readiness risks mass mis-association
+  # Prerequisite for adding Meetings: reconciliation quality must exceed 50% UUID coverage
+  # and type IDs must be confirmed. See ASSOCIATION_PROBE_TECHNICAL_STATE.md.
   supported_patterns:
     - comm_type: "Calls"
       targets: ["company", "contact"]
@@ -121,6 +165,43 @@ association_bridge:
       targets: ["company", "contact", "deal"]
     - comm_type: "Tasks"
       targets: ["company", "contact"]
+    # Meetings: DEFERRED — see comment above
+
+# association_object_bridge covers direct-FK entity associations (not communication engagements).
+# These use association_object.sql.tmpl, not association_bridge.sql.tmpl.
+# Source join: hubspot.<object_table> → staging.stg_<entity>_v2 on icalps_<entity>_id
+# Two-pass: Pass A (StackSync UUID), Pass B (legacy icalps_*_id fallback), NOT EXISTS guard.
+#
+# Ticket: live_push_ready=FALSE — type IDs are placeholders until confirmed from portal.
+# All other direct-FK entities (Company→Contact, Deal→Company, etc.) use StackSync outgoing
+# sync rather than an insert bridge — they are NOT listed here.
+association_object_bridge:
+  idempotency_guard: "NOT EXISTS"
+  supported_patterns:
+    - object_type: "ticket"
+      gold_table: "hubspot.tickets"
+      silver_table: "staging.stg_case_v2"
+      pk_column: "icalps_ticket_id"
+      # live_push_ready=FALSE: do not render live SQL until type IDs confirmed
+      targets:
+        - name: "company"
+          assoc_key: "ticket_company"
+          fk_column: "icalps_company_id"
+          gold_table: "hubspot.companies"
+          icalps_id_column: "icalps_company_id"
+          stacksync_column: "stacksync_record_id_9vpp8v"
+        - name: "contact"
+          assoc_key: "ticket_contact"
+          fk_column: "icalps_contact_id"
+          gold_table: "hubspot.contacts"
+          icalps_id_column: "icalps_contact_id"
+          stacksync_column: "stacksync_record_id_nd85zc"
+        - name: "deal"
+          assoc_key: "ticket_deal"
+          fk_column: "icalps_deal_id"    # stg_case_v2 does not have this yet — add when case→deal FK is confirmed
+          gold_table: "hubspot.deals"
+          icalps_id_column: "icalps_deal_id"
+          stacksync_column: "stacksync_record_id_87b7vd"
 
 stage_mappings:
   validation_gate: "SILVER_VALIDATE"

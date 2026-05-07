@@ -1,12 +1,12 @@
-        -- Rendered SQL engagement upsert
-        -- Communication type: Notes
-        -- Run ID: 20260327_120000
-        -- Invariant: deterministic unique_id and NOT EXISTS idempotency guard.
+-- Rendered SQL engagement upsert
+-- Communication type: Notes
+-- Run ID: 20260327_120000
+-- Invariant: deterministic unique_id and NOT EXISTS idempotency guard.
 
-        INSERT INTO hubspot.notes (
-    note_body, activity_date, unique_id, engagement_source
-)
-SELECT
+INSERT INTO hubspot.notes (
+            note_body, activity_date, unique_id, engagement_source
+        )
+        SELECT
     COALESCE(hs_note_body, hs_note_subject, 'Note from IC''ALPS'),
     hs_timestamp,
     'icalps_' || icalps_communication_id::text,

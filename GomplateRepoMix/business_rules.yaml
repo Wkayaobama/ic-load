@@ -22,6 +22,44 @@ text_normalization:
     - "Strip unsafe control characters while preserving meaningful note/description line breaks."
     - "Apply the same cleaner to long-form text and identity text fields before staging normalization."
 
+company_hierarchy:
+  non_negotiable: true
+  authorities:
+    - "../../ic_load_pipeline/python-ignorethis/custom_objects/create_company_hierarchy.py"
+    - "../../ic_load_pipeline/python-ignorethis/custom_objects/upsert_sibling_companies.py"
+    - "../../custom_objects/SIBLING_COMPANY_PIPELINE.md"
+  rule: "Parent-child company hierarchy, sibling inference, and root-name grouping belong to one transformation package and must not be separated during salvage."
+  hierarchy_order:
+    - "Determine canonical parent company first."
+    - "Infer child/sibling records relative to that parent."
+    - "Use domain and common-root similarity signals to flag likely sibling groups."
+    - "Carry those flags forward into downstream association planning."
+  notes:
+    - "Levenshtein-style or common-root similarity is not a cosmetic dedupe helper; it refines sibling inference after parent selection."
+    - "Company hierarchy logic should be packaged either as its own deployable folder or as a dedicated runner adjunct with high-fidelity context."
+
+dedupe_guardrail:
+  non_negotiable: true
+  rule: "Run a staging-vs-reference duplicate guard before Gold upserts and mirrored association writes."
+  current_state: "preserved for probe/calibration only until the matching contract is fully entity-config-driven"
+  block_on_review_in_live_mode: true
+  notes:
+    - "Association table idempotency does not protect against linking the wrong live entity."
+    - "Use benchmark exports and staging tables for calibration before any live production write."
+  thresholds:
+    company:
+      review_score_min: 0.65
+      block_score_min: 0.82
+    contact:
+      review_score_min: 0.60
+      block_score_min: 0.80
+    opportunity:
+      review_score_min: 0.62
+      block_score_min: 0.78
+    case:
+      review_score_min: 0.65
+      block_score_min: 0.82
+
 deal_stage_mapper:
   non_negotiable: true
   authority: "context/algorithms/deal_stage_mapper.py"

@@ -1,0 +1,112 @@
+## ENTITY CARD LOAD — STATE BEFORE RENDERING
+## Usage: claude -p < opportunity_association.txt > opportunity_association.txt
+
+Entity card: context/cards/opportunity.yaml
+Load this card first. All decisions in this prompt are governed by the card.
+
+Medallion position:
+  Bronze  → staging.stg_opportunity
+  Silver  → staging.stg_opportunity_normalised
+  Gold    → hubspot.deals
+  dbt     → NOT in dbt boundary (direct Bronze→Silver→Gold)
+
+Primary key:  Oppo_OpportunityId  →  icalps_deal_id (bigint)
+StackSync resolution column:  stacksync_record_id_87b7vd
+FK dependencies:
+  Company (REJECT) → oppo_primarycompanyid → hubspot.companies.icalps_company_id
+  Contact (WARN)   → oppo_primarypersonid  → hubspot.contacts.icalps_contact_id
+Import order: 3 (Company AND Contact must be upserted FIRST)
+
+Cardinality:  Opportunity N:1 Company, N:1 Contact, 1:N Communication
+
+Stage mapping (NON-NEGOTIABLE):
+  Module: context.algorithms.deal_stage_mapper
+  Function: map_deal_stage(pipeline, stage, outcome) → DealStageResult
+  Supported pipeline: Hardware (id=766126206)
+  Stage IDs: Identified=85103752, Qualified=85103753, Design In=85103754,
+             Design Win=85103756, Closed Won=85103757, Closed Lost=85103758
+  When to run: SILVER_NORMALISE (before DBT_BUILD)
+  Error policy: raise ValueError — NEVER silently produce a wrong ID
+
+Computed columns (included in Gold upsert payload):
+  weighted_forecast    = icalps_forecast * (icalps_certainty / 100.0)
+  net_amount           = icalps_forecast - icalps_cost
+  net_weighted_amount  = (icalps_forecast - icalps_cost) * (icalps_certainty / 100.0)
+
+Dedup scorer:  Levenshtein (oppo_description as primary signal at weight 0.45)
+Dedup thresholds:  review ≥ 0.62, block ≥ 0.78
+
+Notes→Deal association:
+  association_type_id: 214
+  assoc_table: hubspot.associations_notes_deal
+  two-pass: UUID (stacksync_record_id_87b7vd) + legacy (icalps_deal_id) fallback
+
+Pipeline status:  live_push_ready=true
+Runner arg:  --entity opportunity
+
+---
+
+## CONTEXT: You are an IC'ALPS pipeline engineer
+
+You are working on the Silver normalization, deal stage mapping, computed
+columns, and Gold upsert layers of a StackSync-mirrored PostgreSQL CRM
+database. The entity card is the canonical state of this entity.
+
+All IC'ALPS stage labels are NOT valid HubSpot stage IDs. The deal_stage_mapper
+module is the only authority for this conversion. Do not hardcode stage IDs
+anywhere except by calling map_deal_stage() or referencing list_all_mappings().
+
+Dedup key fields and weights (from card):
+  oppo_description (levenshtein)   → weight 0.45
+  oppo_primarycompanyid (exact)    → weight 0.20
+  oppo_primarypersonid (exact)     → weight 0.10
+  hubspot_pipeline_id (exact)      → weight 0.10
+  icalps_forecast (digits)         → weight 0.10
+  hubspot_dealstage_name (exact)   → weight 0.05
+
+Duplicate prevention:
+  _load_status watermark: NEW and MODIFIED only
+  INSERT ... ON CONFLICT (icalps_deal_id) DO UPDATE
+  Notes→Deal: NOT EXISTS on hubspot.associations_notes_deal
+
+---
+
+## QUESTIONS — produce executable SQL for each
+## Output will be piped to opportunity_association.txt
+
+1. Write the Gold upsert SQL for hubspot.deals.
+   - Conflict key: icalps_deal_id
+   - Filter: _load_status IN ('NEW', 'MODIFIED')
+   - Include computed columns: weighted_forecast, net_amount, net_weighted_amount
+   - Resolve oppo_primarycompanyid to hubspot.companies.id via subquery
+   - Exclude createdate and stacksync_record_id_87b7vd from UPDATE SET
+   - Source: staging.stg_opportunity_normalised
+
+2. Write the deal stage mapping as a PostgreSQL SQL CASE expression.
+   Accepts icalps_pipeline, icalps_stage (French or English), icalps_outcome.
+   Returns hubspot_pipeline_id (int) and hubspot_stage_id (int).
+   Cover all 25 combinations from list_all_mappings().
+   Return NULL with a warning comment for any unmapped combination.
+
+3. Write the Silver dedup SQL for Opportunity using prefer_record_with_most_metadata.
+
+4. Write the Silver validation SQL for all STOP and WARN checks from the card.
+   Include the stage mapping validation check:
+   "icalps_pipeline + icalps_stage + icalps_outcome resolves to a known combination".
+   Return: check_name, passed, severity, row_count_failing.
+
+5. Write the full two-pass association SQL for Notes → Deal (type_id=214).
+   Pass A: fct.associated_deal_id → hubspot.deals.stacksync_record_id_87b7vd
+   Pass B: fct.legacy_deal_id     → hubspot.deals.icalps_deal_id (when UUID is NULL)
+   Both passes: NOT EXISTS on hubspot.associations_notes_deal
+   UNION (not UNION ALL) between passes.
+   Engagement unique_id filter: WHERE comm.unique_id LIKE 'icalps_%'
+
+6. Write the Levenshtein deal duplicate detection SQL.
+   Compare oppo_description against benchmark "Deal Name" column.
+   Flag pairs where similarity >= 0.62 AND same oppo_primarycompanyid.
+   These are review candidates.
+
+7. State the full runner CLI invocation for an Opportunity run with notes
+   association enabled:
+     python -m pipeline.runner --entity opportunity ...

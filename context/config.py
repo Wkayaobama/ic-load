@@ -17,7 +17,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = Path(os.getenv("PIPELINE_ARTIFACTS_DIR", str(PROJECT_ROOT / "artifacts")))
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
-BRONZE_DIR = Path(os.getenv("BRONZE_CSV_DIR", str(PROJECT_ROOT / "bronze_layer")))
+BRONZE_DIR = PROJECT_ROOT.parent / "bronze_layer"
+DBT_PROJECT_DIR = PROJECT_ROOT / "dbt"
 VALIDATION_SCHEMA_PATH = PROJECT_ROOT / "ValidationRules" / "icalps_crm_schema.yaml"
 SCHEMA_CONTEXT_PATH = PROJECT_ROOT / "GomplateRepoMix" / "schema_context.yaml"
 RUN_CONTEXT_PATH = PROJECT_ROOT / "GomplateRepoMix" / "run_context.yaml"
@@ -26,13 +27,14 @@ MANIFEST_PATH = PROJECT_ROOT / "MANIFEST.yaml"
 SQL_TEMPLATE_DIR = PROJECT_ROOT / "sql" / "templates"
 SQL_RENDERED_DIR = PROJECT_ROOT / "sql" / "rendered"
 BENCHMARK_DIR = PROJECT_ROOT.parent / "benchmark"
+MANIFEST_PATH = PROJECT_ROOT / "MANIFEST.yaml"
 
 _BRONZE_PREFIX = {
     "communication": "Bronze_Communication",
-    "company":       "Bronze_Company",
-    "contact":       "Bronze_Person",
-    "opportunity":   "Bronze_Opportunity",
-    "case":          "Bronze_Case",
+    "company": "Bronze_Company",
+    "contact": "Bronze_Person",
+    "opportunity": "Bronze_Opportunity",
+    "case": "Bronze_Case",
 }
 
 
@@ -70,10 +72,14 @@ ENTITIES: dict[str, EntityConfig] = {
         staging_table="stg_opportunity",
         primary_key="Oppo_OpportunityId",
     ),
+    # Case/Ticket — import_order=5, live_push_ready=FALSE
+    # Bronze CSV override: artifacts/assessment/case_ticket_snippet.csv
+    # Silver target: staging.stg_case_v2 (assessed) → staging.stg_case (live, after promotion)
+    # Gold target: hubspot.tickets (NOT YET LIVE — awaiting stage mapper + match rate ≥95%)
     "case": EntityConfig(
         name="case",
         bronze_csv="Bronze_Case.csv",
-        staging_table="stg_case",
+        staging_table="stg_cases",      # Bronze raw table (legacy preservation)
         primary_key="Case_CaseId",
     ),
 }
@@ -97,6 +103,10 @@ def latest_bronze_path(entity: str) -> Path | None:
 
 def load_yaml(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def load_manifest() -> dict[str, Any]:
+    return load_yaml(MANIFEST_PATH)
 
 
 def load_schema_context() -> dict[str, Any]:
@@ -199,20 +209,29 @@ def load_entity_translation_contract() -> dict[str, Any]:
                 "raw_table": "stg_company",
                 "normalised_table": "stg_company_normalised",
                 "raw_primary_key": "Comp_CompanyId",
-                "normalised_primary_key": "comp_companyid",
+                # Actual column names from stg_company_normalised (probe_post_dbt.csv)
+                "normalised_primary_key": "icalps_company_id",
                 "canonical_fields": {
-                    "icalps_company_id": "comp_companyid",
-                    "name": "comp_name",
-                    "icalps_comp_website": "comp_website",
-                    "territory": "comp_territory",
-                    "industry": "comp_sector",
-                    "comp_sector": "comp_sector",
-                    "comp_type": "icalps_companytype",
-                    "city": "address_city",
-                    "state": "address_state",
-                    "zip": "address_postcode",
-                    "country": "icalps_country",
-                    "phone": "icalps_companyphone",
+                    # Mapping: HubSpot target field -> silver source column
+                    "icalps_company_id": "icalps_company_id",
+                    "name": "name",
+                    "icalps_comp_website": "icalps_comp_website",
+                    "icalps_companyphone": "icalps_companyphone",
+                    "icalps_companytype": "icalps_companytype",
+                    "icalps_companystatus": "icalps_companystatus",
+                    "icalps_compsource": "icalps_compsource",
+                    "icalps_comp_language": "icalps_comp_language",
+                    "icalps_comp_numemployees": "icalps_comp_numemployees",
+                    "icalps_industry_drill_down": "icalps_industry_drill_down",
+                    "icalps_companyaddress": "icalps_companyaddress",
+                    "icalps_street_address": "icalps_street_address",
+                    "icalps_addresscity": "city",
+                    "icalps_company_state": "icalps_company_state",
+                    "icalps_address_postcode": "icalps_address_postcode",
+                    "icalps_address_country": "icalps_address_country",
+                    "icalps_companyemail": "icalps_companyemail",
+                    "linkedin_company_page": "linkedin_company_page",
+                    "icalps_ownerid_raw": "icalps_ownerid_raw",
                     "_load_status": "_load_status",
                 },
             },
@@ -255,21 +274,27 @@ def load_entity_translation_contract() -> dict[str, Any]:
                 "raw_table": "stg_contact",
                 "normalised_table": "stg_contact_normalised",
                 "raw_primary_key": "Pers_PersonId",
-                "normalised_primary_key": "pers_personid",
+                # Actual column names from stg_contact_normalised (probe_post_dbt.csv)
+                "normalised_primary_key": "icalps_contact_id",
                 "canonical_fields": {
-                    "icalps_contact_id": "pers_personid",
-                    "icalps_company_id": "pers_companyid",
-                    "firstname": "pers_firstname",
-                    "lastname": "pers_lastname",
-                    "email": "icalps_email",
-                    "jobtitle": "icalps_title",
-                    "phone": "icalps_businessphone",
-                    "mobilephone": "icalps_mobilephone",
-                    "city": "address_city",
-                    "state": "address_state",
-                    "zip": "address_postcode",
-                    "country": "icalps_country",
-                    "lastmodifieddate": "pers_updateddate",
+                    # Mapping: HubSpot target field -> silver source column
+                    "icalps_contact_id": "icalps_contact_id",
+                    "icalps_company_id": "icalps_company_id",
+                    "firstname": "firstname",
+                    "lastname": "lastname",
+                    "email": "email",
+                    "icalps_perstitle": "icalps_perstitle",
+                    "icalps_businessphone": "icalps_businessphone",
+                    "icalps_mobilephone": "icalps_mobilephone",
+                    "icalps_contactstatus": "icalps_contactstatus",
+                    "icalps_department": "icalps_department",
+                    "salutation": "salutation",
+                    "icalps_addresscity": "icalps_addresscity",
+                    "state": "state",
+                    "zip": "zip",
+                    "icalps_address_country": "icalps_address_country",
+                    "linkedin_url": "linkedin_url",
+                    "lastmodifieddate": "lastmodifieddate",
                     "_load_status": "_load_status",
                 },
             },
@@ -313,20 +338,27 @@ def load_entity_translation_contract() -> dict[str, Any]:
                 "raw_table": "stg_opportunity",
                 "normalised_table": "stg_opportunity_normalised",
                 "raw_primary_key": "Oppo_OpportunityId",
-                "normalised_primary_key": "oppo_opportunityid",
+                # Actual column names from stg_opportunity_normalised (probe_post_dbt.csv)
+                "normalised_primary_key": "icalps_deal_id",
                 "canonical_fields": {
-                    "icalps_deal_id": "oppo_opportunityid",
-                    "icalps_company_id": "oppo_primarycompanyid",
-                    "icalps_contact_id": "oppo_primarypersonid",
-                    "dealname": "oppo_description",
-                    "icalps_dealtype": "oppo_type",
-                    "icalps_dealnotes": "oppo_notes",
-                    "amount": "icalps_forecast",
-                    "icalps_dealforecast": "icalps_forecast",
-                    "icalps_dealcertainty": "icalps_certainty",
-                    "pipeline": "hubspot_pipeline_id",
-                    "dealstage": "hubspot_dealstage_name",
+                    # Mapping: HubSpot target field -> silver source column
+                    "icalps_deal_id": "icalps_deal_id",
+                    "icalps_company_id": "icalps_company_id",
+                    "icalps_contact_id": "icalps_contact_id",
+                    "dealname": "dealname",
+                    "icalps_dealtype": "icalps_dealtype",
+                    "icalps_dealnotes": "icalps_dealnotes",
+                    "amount": "amount",
+                    "icalps_dealforecast": "amount",
+                    "icalps_dealcertainty": "icalps_oppocertainty",
+                    "pipeline": "pipeline",
+                    "dealstage": "dealstage",
                     "closedate": "icalps_closedate",
+                    "ic_alps_cost": "ic_alps_cost",
+                    "icalps_stage": "icalps_stage",
+                    "icalps_dealstatus": "icalps_dealstatus",
+                    "icalps_opendate": "icalps_opendate",
+                    "hubspot_owner_id": "hubspot_owner_id",
                     "_load_status": "_load_status",
                 },
             },
@@ -403,7 +435,76 @@ def load_entity_translation_contract() -> dict[str, Any]:
                 "association_resolution": resolution_map["communication"]["association_resolution"],
             },
         },
+        "case": {
+            "legacy": {
+                "primary_key": "Case_CaseId",
+                "fields": [
+                    "Case_CaseId",
+                    "Case_PrimaryCompanyId",
+                    "Case_PrimaryPersonId",
+                    "Case_Description",
+                    "Case_Status",
+                    "Case_Stage",
+                    "Case_Priority",
+                    "Case_CreateDate",
+                    "Case_CloseDate",
+                    "Company_Name",
+                    "Person_EmailAddress",
+                ],
+            },
+            "silver": {
+                "raw_table": "stg_cases",
+                "normalised_table": "stg_case",
+                "raw_primary_key": "Case_CaseId",
+                "normalised_primary_key": "icalps_ticket_id",
+                "canonical_fields": {
+                    "icalps_ticket_id": "icalps_ticket_id",
+                    "subject": "subject",
+                    "content": "content",
+                    "pipeline": "hs_pipeline",
+                    "pipeline_stage": "hs_pipeline_stage",
+                    "ticket_priority": "hs_ticket_priority",
+                    "createdate": "createdate",
+                    "closed_date": "closed_date",
+                    "icalps_case_status": "icalps_case_status",
+                    "icalps_case_stage": "icalps_case_stage",
+                    "icalps_case_priority": "icalps_case_priority",
+                    "icalps_company_id": "icalps_company_id",
+                    "icalps_contact_id": "icalps_contact_id",
+                    "icalps_company_name": "icalps_company_name",
+                    "icalps_contact_email": "icalps_contact_email",
+                    "reconciliation_status": "reconciliation_status",
+                },
+            },
+            "gold": {
+                "target_table": "hubspot.tickets",
+                "match_field": "IcAlps_TicketID",
+                "target_fields": [
+                    "Ticket name",
+                    "Pipeline",
+                    "Create date",
+                    "Ticket status",
+                    "Priority",
+                    "IcAlps_TicketStage",
+                    "Ticket description",
+                    "IcAlps_TicketPersonEmailAddress",
+                    "IcAlps_CompanyID",
+                ],
+                "benchmark_export": BENCHMARK_DIR / "hubspot-crm-exports-all-tickets-2026-04-04-1.csv",
+            },
+            "resolution": {
+                "legacy_match_field": "Case_CaseId",
+                "canonical_match_field": "icalps_ticket_id",
+            },
+        },
     }
+
+
+def dbt_command() -> list[str] | None:
+    raw = os.getenv("ICALPS_DBT_COMMAND")
+    if not raw:
+        return None
+    return raw.split()
 
 
 def stacksync_sync_assumed() -> bool:
