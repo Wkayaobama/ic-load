@@ -1,0 +1,1 @@
+IC'ALPS legacy quote — second fixture for folder iteration tests.

@@ -1,0 +1,2 @@
+IC'ALPS legacy invoice — fixture for round-trip testing.
+This file exists only as a payload to assert HubSpot file upload + note attachment + v4 association.

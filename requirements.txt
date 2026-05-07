@@ -4,3 +4,6 @@ psycopg2-binary
 PyYAML
 pytest
 beautifulsoup4
+requests
+python-dotenv
+requests-mock
