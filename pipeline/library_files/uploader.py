@@ -21,6 +21,7 @@ from typing import Callable, Iterable, Sequence
 import requests
 
 from .client import HubSpotClient
+from .ledger import LedgerLike
 
 
 @dataclass
@@ -67,10 +68,12 @@ class HubSpotFileUploader:
         *,
         backoff_schedule: Sequence[float] = (1.0, 2.0, 4.0, 8.0, 16.0),
         sleep_fn: Callable[[float], None] = time.sleep,
+        ledger: LedgerLike | None = None,
     ) -> None:
         self.client = client
         self._backoff = tuple(backoff_schedule)
         self._sleep = sleep_fn
+        self.ledger = ledger
 
     def _retry(self, fn: Callable[[], dict]) -> dict:
         last_exc: Exception | None = None
@@ -92,8 +95,16 @@ class HubSpotFileUploader:
     # -- Phase 1 -------------------------------------------------------------
 
     def upload_phase(self, rows: Iterable[LibraryFileRow]) -> list[dict]:
+        rows_list = list(rows)
+        skip_set = self.ledger.upload_skip_set() if self.ledger else set()
+        existing = (
+            self.ledger.load_existing([r.legacy_id for r in rows_list])
+            if self.ledger
+            else {}
+        )
+
         ledger: list[dict] = []
-        for row in rows:
+        for row in rows_list:
             entry = {
                 "legacy_id": row.legacy_id,
                 "hs_file_id": None,
@@ -102,10 +113,22 @@ class HubSpotFileUploader:
                 "error": None,
                 "attempts": 0,
             }
+            # Crash-recovery: rows already uploaded skip the REST call but still
+            # populate the in-memory ledger so Phase 2 can attach against them.
+            if row.legacy_id in skip_set:
+                prev = existing.get(row.legacy_id, {})
+                entry["hs_file_id"] = prev.get("hs_file_id")
+                entry["hs_note_id"] = prev.get("hs_note_id")
+                entry["status"] = STATUS_UPLOADED
+                ledger.append(entry)
+                continue
+
             if not row.file_path.is_file():
                 entry["status"] = STATUS_FAILED
                 entry["error"] = "file_not_found"
                 ledger.append(entry)
+                if self.ledger:
+                    self.ledger.record_upload(entry)
                 continue
             try:
                 resp = self._retry(lambda: self.client.upload_file(row.file_path))
@@ -115,6 +138,8 @@ class HubSpotFileUploader:
                 entry["status"] = STATUS_FAILED
                 entry["error"] = f"upload_error: {exc}"
             ledger.append(entry)
+            if self.ledger:
+                self.ledger.record_upload(entry)
         return ledger
 
     # -- Phase 2 -------------------------------------------------------------
@@ -122,14 +147,31 @@ class HubSpotFileUploader:
     def attach_phase(
         self, rows: Iterable[LibraryFileRow], ledger: list[dict]
     ) -> list[dict]:
+        attach_skip = self.ledger.attach_skip_set() if self.ledger else set()
+        existing = (
+            self.ledger.load_existing([r.legacy_id for r in rows])
+            if self.ledger
+            else {}
+        )
+
         by_legacy = {e["legacy_id"]: e for e in ledger}
         for row in rows:
             entry = by_legacy.get(row.legacy_id)
             if entry is None or entry["status"] != STATUS_UPLOADED:
                 continue
+
+            # Crash-recovery: rows already attached carry through unchanged.
+            if row.legacy_id in attach_skip:
+                prev = existing.get(row.legacy_id, {})
+                entry["hs_note_id"] = prev.get("hs_note_id")
+                entry["status"] = STATUS_ATTACHED
+                continue
+
             if not row.target_associations:
                 entry["status"] = STATUS_FAILED
                 entry["error"] = "no_target_associations"
+                if self.ledger:
+                    self.ledger.record_attach(entry)
                 continue
             # Note creation
             try:
@@ -143,6 +185,8 @@ class HubSpotFileUploader:
             except Exception as exc:
                 entry["status"] = STATUS_FAILED
                 entry["error"] = f"note_create_error: {exc}"
+                if self.ledger:
+                    self.ledger.record_attach(entry)
                 continue
             # Associations — best-effort per target
             failed_targets: list[str] = []
@@ -160,6 +204,8 @@ class HubSpotFileUploader:
                 entry["error"] = "association_failed: " + "; ".join(failed_targets)
             else:
                 entry["status"] = STATUS_ATTACHED
+            if self.ledger:
+                self.ledger.record_attach(entry)
         return ledger
 
     def run(self, rows: list[LibraryFileRow]) -> list[dict]:
