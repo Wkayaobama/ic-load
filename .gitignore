@@ -12,6 +12,7 @@ rendered_sql/
 *.log
 *.parquet
 bronze_layer/
+sql/library/*.csv
 gold_layer/
 memory/
 benchmark/
