@@ -39,6 +39,7 @@ STATUS_UPLOADED = "uploaded"
 STATUS_ATTACHED = "attached"
 STATUS_PARTIAL = "partial"
 STATUS_FAILED = "failed"
+STATUS_DRY_RUN = "dry_run"
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -94,7 +95,16 @@ class HubSpotFileUploader:
 
     # -- Phase 1 -------------------------------------------------------------
 
-    def upload_phase(self, rows: Iterable[LibraryFileRow]) -> list[dict]:
+    def upload_phase(
+        self, rows: Iterable[LibraryFileRow], *, live: bool = True
+    ) -> list[dict]:
+        """Phase 1 — upload binaries to HubSpot Files.
+
+        ``live=False`` (controlled by ICALPS_APPROVE_FILES_UPLOAD env var at
+        the runner layer) puts each row into ``dry_run`` status without firing
+        the REST call. File-existence and target-association preconditions are
+        still checked — those are read-only and surface operator errors early.
+        """
         rows_list = list(rows)
         skip_set = self.ledger.upload_skip_set() if self.ledger else set()
         existing = (
@@ -130,6 +140,15 @@ class HubSpotFileUploader:
                 if self.ledger:
                     self.ledger.record_upload(entry)
                 continue
+
+            if not live:
+                # DRY-RUN: precondition checks already passed; record intent.
+                entry["status"] = STATUS_DRY_RUN
+                ledger.append(entry)
+                if self.ledger:
+                    self.ledger.record_upload(entry)
+                continue
+
             try:
                 resp = self._retry(lambda: self.client.upload_file(row.file_path))
                 entry["hs_file_id"] = resp["id"]
@@ -145,8 +164,20 @@ class HubSpotFileUploader:
     # -- Phase 2 -------------------------------------------------------------
 
     def attach_phase(
-        self, rows: Iterable[LibraryFileRow], ledger: list[dict]
+        self,
+        rows: Iterable[LibraryFileRow],
+        ledger: list[dict],
+        *,
+        live: bool = True,
     ) -> list[dict]:
+        """Phase 2 — create the note + v4-associate to targets.
+
+        ``live=False`` (controlled by ICALPS_APPROVE_FILE_NOTES_POST env var at
+        the runner layer) marks each upload-eligible row as ``dry_run`` without
+        creating a note or association. Rows that were themselves dry-run in
+        Phase 1 (no hs_file_id) carry through as ``dry_run`` automatically —
+        Phase 2 cannot attach what Phase 1 didn't upload.
+        """
         attach_skip = self.ledger.attach_skip_set() if self.ledger else set()
         existing = (
             self.ledger.load_existing([r.legacy_id for r in rows])
@@ -157,7 +188,16 @@ class HubSpotFileUploader:
         by_legacy = {e["legacy_id"]: e for e in ledger}
         for row in rows:
             entry = by_legacy.get(row.legacy_id)
-            if entry is None or entry["status"] != STATUS_UPLOADED:
+            if entry is None:
+                continue
+
+            # Phase 1 dry-runs propagate as Phase 2 dry-runs (no file id to attach).
+            if entry["status"] == STATUS_DRY_RUN:
+                if self.ledger:
+                    self.ledger.record_attach(entry)
+                continue
+
+            if entry["status"] != STATUS_UPLOADED:
                 continue
 
             # Crash-recovery: rows already attached carry through unchanged.
@@ -173,6 +213,15 @@ class HubSpotFileUploader:
                 if self.ledger:
                     self.ledger.record_attach(entry)
                 continue
+
+            if not live:
+                # DRY-RUN: row was uploaded successfully in Phase 1 but Phase 2
+                # gate is closed. Record intent without firing REST.
+                entry["status"] = STATUS_DRY_RUN
+                if self.ledger:
+                    self.ledger.record_attach(entry)
+                continue
+
             # Note creation
             try:
                 note = self._retry(
@@ -208,5 +257,12 @@ class HubSpotFileUploader:
                 self.ledger.record_attach(entry)
         return ledger
 
-    def run(self, rows: list[LibraryFileRow]) -> list[dict]:
-        return self.attach_phase(rows, self.upload_phase(rows))
+    def run(
+        self,
+        rows: list[LibraryFileRow],
+        *,
+        upload_live: bool = True,
+        attach_live: bool = True,
+    ) -> list[dict]:
+        ledger = self.upload_phase(rows, live=upload_live)
+        return self.attach_phase(rows, ledger, live=attach_live)
