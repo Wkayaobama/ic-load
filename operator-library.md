@@ -49,14 +49,18 @@ The sandbox-only snapshot branch `jl/library-files-rest-sandbox` is **frozen**. 
 
 ## Pre-flight checklist (one-time before Phase 7c)
 
-- [ ] `.env` populated:
+- [ ] `.env.icalps` populated at the **Codebase root** (one level up from any
+      worktree, e.g. `C:\...\Codebase\.env.icalps`). The library and cleanup
+      worktrees both read from it via `find_dotenv` walk-up:
   - `HUBSPOT_SANDBOX_TOKEN`, `HUBSPOT_SANDBOX_PORTAL_ID` (sandbox portal `49610528`)
+  - `HUBSPOT_PROD_TOKEN` — for Phase 9 onward
   - `LIBRARY_BASE_DIR` — local folder where the legacy files live
   - `PROD_POSTGRES_DSN` — full URI to StackSync postgres
   - `ICALPS_APPROVE_FILES_UPLOAD` and `ICALPS_APPROVE_FILE_NOTES_POST` left **unset** for now (default = DRY-RUN)
+  - Worktree-local `.env` still works as an override for ad-hoc debugging — process env > worktree `.env` > Codebase `.env.icalps`.
 - [ ] `sql/library/files_icalps.csv` is in place (5,989 rows). Verify:
   ```powershell
-  python -c "from pipeline.library_files.silver_library import LibrarySilverNormaliser; from pathlib import Path; n = LibrarySilverNormaliser(Path('sql/library/files_icalps.csv')); list(n.parse()); print(n.stats)"
+  uv run python -c "from pipeline.library_files.silver_library import LibrarySilverNormaliser; from pathlib import Path; n = LibrarySilverNormaliser(Path('sql/library/files_icalps.csv')); list(n.parse()); print(n.stats)"
   ```
   Expect roughly: `total_rows=5989 written_rows=5622`.
 - [ ] HubSpot sandbox app has Files API + Notes API + v4 Associations scopes
@@ -73,7 +77,7 @@ The sandbox-only snapshot branch `jl/library-files-rest-sandbox` is **frozen**. 
 This loads the bronze CSV into `staging.stg_library_normalised` and creates the `staging.fct_library_files` view that joins to `hubspot.{companies,contacts,deals}`.
 
 ```powershell
-python -c @"
+uv run python -c @"
 from pipeline.library_files.silver_library import LibrarySilverNormaliser
 from pipeline.library_files.config import Settings
 from pathlib import Path
@@ -112,7 +116,7 @@ Pick **one** `legacy_library_id` whose file you know exists on disk under `LIBRA
 
 ```powershell
 # Seed: create a sandbox company; capture its sandbox-side id from the response
-python -c @"
+uv run python -c @"
 from pipeline.library_files.client import HubSpotClient
 from pipeline.library_files.config import Settings
 c = HubSpotClient.from_settings(Settings.from_env())
@@ -138,7 +142,7 @@ Take that sandbox id and the prod `legacy_company_id` from step 2, then write th
 Remove-Item env:ICALPS_APPROVE_FILES_UPLOAD -ErrorAction SilentlyContinue
 Remove-Item env:ICALPS_APPROVE_FILE_NOTES_POST -ErrorAction SilentlyContinue
 
-python -m pipeline.library_files.runner migrate `
+uv run python -m pipeline.library_files.runner migrate `
     --library-base-dir "$env:LIBRARY_BASE_DIR" `
     --overrides-json overrides.json `
     --source postgres `
@@ -152,7 +156,7 @@ python -m pipeline.library_files.runner migrate `
 ```powershell
 $env:ICALPS_APPROVE_FILES_UPLOAD = "1"
 
-python -m pipeline.library_files.runner migrate `
+uv run python -m pipeline.library_files.runner migrate `
     --library-base-dir "$env:LIBRARY_BASE_DIR" `
     --overrides-json overrides.json `
     --source postgres `
@@ -166,7 +170,7 @@ python -m pipeline.library_files.runner migrate `
 ```powershell
 $env:ICALPS_APPROVE_FILE_NOTES_POST = "1"
 
-python -m pipeline.library_files.runner migrate `
+uv run python -m pipeline.library_files.runner migrate `
     --library-base-dir "$env:LIBRARY_BASE_DIR" `
     --overrides-json overrides.json `
     --source postgres `
@@ -224,7 +228,7 @@ $test_id = "<chosen legacy_library_id>"
 Remove-Item env:ICALPS_APPROVE_FILES_UPLOAD -ErrorAction SilentlyContinue
 Remove-Item env:ICALPS_APPROVE_FILE_NOTES_POST -ErrorAction SilentlyContinue
 
-python -m pipeline.library_files.runner migrate `
+uv run python -m pipeline.library_files.runner migrate `
     --library-base-dir "$env:LIBRARY_BASE_DIR" `
     --no-overrides `
     --token-env-var HUBSPOT_PROD_TOKEN `
@@ -237,7 +241,7 @@ python -m pipeline.library_files.runner migrate `
 $env:ICALPS_APPROVE_FILES_UPLOAD = "1"
 $env:ICALPS_APPROVE_FILE_NOTES_POST = "1"
 
-python -m pipeline.library_files.runner migrate `
+uv run python -m pipeline.library_files.runner migrate `
     --library-base-dir "$env:LIBRARY_BASE_DIR" `
     --no-overrides `
     --token-env-var HUBSPOT_PROD_TOKEN `
@@ -296,7 +300,7 @@ After Phase 9 green. Same setup, expand to 10 rows.
 $env:ICALPS_APPROVE_FILES_UPLOAD = "1"
 $env:ICALPS_APPROVE_FILE_NOTES_POST = "1"
 
-python -m pipeline.library_files.runner migrate `
+uv run python -m pipeline.library_files.runner migrate `
     --library-base-dir "$env:LIBRARY_BASE_DIR" `
     --no-overrides `
     --token-env-var HUBSPOT_PROD_TOKEN `
@@ -316,7 +320,7 @@ Remove the LIMIT. Phase 5's idempotency makes re-runs safe.
 $env:ICALPS_APPROVE_FILES_UPLOAD = "1"
 $env:ICALPS_APPROVE_FILE_NOTES_POST = "1"
 
-python -m pipeline.library_files.runner migrate `
+uv run python -m pipeline.library_files.runner migrate `
     --library-base-dir "$env:LIBRARY_BASE_DIR" `
     --no-overrides `
     --token-env-var HUBSPOT_PROD_TOKEN `
