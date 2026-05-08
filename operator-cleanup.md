@@ -28,8 +28,10 @@ independent features running on the same infrastructure.
       the join keys (`icalps_company_id`, `icalps_contact_id`,
       `icalps_deal_id`) are excluded from the property manifest by default and
       gated behind `--include-join-keys --library-migration-complete`.
-- [ ] `.env` has `HUBSPOT_PROD_TOKEN` set (the same token library_files Phase 9
-      uses) and the token has the additional cleanup scopes:
+- [ ] `.env.icalps` (at the **Codebase root**, one level above any worktree)
+      has `HUBSPOT_PROD_TOKEN` and `PROD_POSTGRES_DSN`. Both library and
+      cleanup worktrees read this file via `find_dotenv` walk-up. Token needs
+      the additional cleanup scopes:
       `crm.objects.{companies,contacts,deals}.write`,
       `crm.schemas.{companies,contacts,deals}.write`.
 - [ ] All three approval gates **unset** for now (default = DRY-RUN):
@@ -45,7 +47,7 @@ The runner calls `CleanupLedger.bootstrap()` automatically on first command.
 Verify it created the four tables:
 
 ```powershell
-python -m pipeline.cleanup.runner status
+uv run python -m pipeline.cleanup.runner status
 ```
 
 Expect a `{}`-shaped JSON with `manifest`, `archives`, `gdpr`, `properties`
@@ -68,13 +70,13 @@ narrower than `IS NOT NULL`.
 ### Option 1 — inline predicate
 
 ```powershell
-python -m pipeline.cleanup.runner snapshot --object companies `
+uv run python -m pipeline.cleanup.runner snapshot --object companies `
     --where "icalps_company_id IS NOT NULL AND lastmodifieddate < '2023-01-01'"
 
-python -m pipeline.cleanup.runner snapshot --object contacts `
+uv run python -m pipeline.cleanup.runner snapshot --object contacts `
     --where "icalps_contact_id IS NOT NULL AND lastmodifieddate < '2023-01-01'"
 
-python -m pipeline.cleanup.runner snapshot --object deals `
+uv run python -m pipeline.cleanup.runner snapshot --object deals `
     --where "icalps_deal_id IS NOT NULL AND closedate < '2023-01-01'"
 ```
 
@@ -96,7 +98,7 @@ WHERE icalps_company_id IS NOT NULL
 Then snapshot from the view:
 
 ```powershell
-python -m pipeline.cleanup.runner snapshot --object companies `
+uv run python -m pipeline.cleanup.runner snapshot --object companies `
     --source-view staging.fct_cleanup_companies
 ```
 
@@ -124,7 +126,7 @@ WHERE object_type = 'companies' ORDER BY random() LIMIT 10;
 Refuses to proceed if the cleanup manifest collides with attached library Notes.
 
 ```powershell
-python -m pipeline.cleanup.runner check-overlap
+uv run python -m pipeline.cleanup.runner check-overlap
 ```
 
 **Pass criterion:** `overlap check: 0 rows ... Safe to proceed.`
@@ -159,9 +161,9 @@ Remove-Item env:ICALPS_APPROVE_ARCHIVE      -ErrorAction SilentlyContinue
 Remove-Item env:ICALPS_APPROVE_GDPR_DELETE  -ErrorAction SilentlyContinue
 Remove-Item env:ICALPS_APPROVE_PROP_DELETE  -ErrorAction SilentlyContinue
 
-python -m pipeline.cleanup.runner archive --object deals
-python -m pipeline.cleanup.runner archive --object contacts
-python -m pipeline.cleanup.runner archive --object companies
+uv run python -m pipeline.cleanup.runner archive --object deals
+uv run python -m pipeline.cleanup.runner archive --object contacts
+uv run python -m pipeline.cleanup.runner archive --object companies
 ```
 
 **Expect:** banners say `Phase E: DRY`. Each summary's `attempted` matches
@@ -177,9 +179,9 @@ cascade. But going bottom-up keeps the spot-checks readable.
 ```powershell
 $env:ICALPS_APPROVE_ARCHIVE = "1"
 
-python -m pipeline.cleanup.runner archive --object deals
-python -m pipeline.cleanup.runner archive --object contacts
-python -m pipeline.cleanup.runner archive --object companies
+uv run python -m pipeline.cleanup.runner archive --object deals
+uv run python -m pipeline.cleanup.runner archive --object contacts
+uv run python -m pipeline.cleanup.runner archive --object companies
 ```
 
 ### After each object
@@ -222,7 +224,7 @@ window is bypassed.
 ```powershell
 $env:ICALPS_APPROVE_GDPR_DELETE = "1"
 
-python -m pipeline.cleanup.runner gdpr-delete-contacts
+uv run python -m pipeline.cleanup.runner gdpr-delete-contacts
 ```
 
 Verifies only contacts already at `status='archived'` are eligible.
@@ -273,9 +275,9 @@ Confirm the lists match what you intend to delete. Edit and commit if needed.
 ```powershell
 Remove-Item env:ICALPS_APPROVE_PROP_DELETE -ErrorAction SilentlyContinue
 
-python -m pipeline.cleanup.runner delete-properties --object companies
-python -m pipeline.cleanup.runner delete-properties --object contacts
-python -m pipeline.cleanup.runner delete-properties --object deals
+uv run python -m pipeline.cleanup.runner delete-properties --object companies
+uv run python -m pipeline.cleanup.runner delete-properties --object contacts
+uv run python -m pipeline.cleanup.runner delete-properties --object deals
 ```
 
 Banner shows `Phase F: DRY`. Ledger fills with `status='dry_run'`. No HubSpot
@@ -286,9 +288,9 @@ calls.
 ```powershell
 $env:ICALPS_APPROVE_PROP_DELETE = "1"
 
-python -m pipeline.cleanup.runner delete-properties --object companies
-python -m pipeline.cleanup.runner delete-properties --object contacts
-python -m pipeline.cleanup.runner delete-properties --object deals
+uv run python -m pipeline.cleanup.runner delete-properties --object companies
+uv run python -m pipeline.cleanup.runner delete-properties --object contacts
+uv run python -m pipeline.cleanup.runner delete-properties --object deals
 ```
 
 Verify in HubSpot UI → Settings → Properties → filter by `icalps` → confirm
@@ -300,11 +302,11 @@ Only after F.1 reconciles. Runner refuses if you pass only one of the two
 flags:
 
 ```powershell
-python -m pipeline.cleanup.runner delete-properties --object companies `
+uv run python -m pipeline.cleanup.runner delete-properties --object companies `
     --include-join-keys --library-migration-complete
-python -m pipeline.cleanup.runner delete-properties --object contacts `
+uv run python -m pipeline.cleanup.runner delete-properties --object contacts `
     --include-join-keys --library-migration-complete
-python -m pipeline.cleanup.runner delete-properties --object deals `
+uv run python -m pipeline.cleanup.runner delete-properties --object deals `
     --include-join-keys --library-migration-complete
 ```
 
@@ -316,7 +318,7 @@ HubSpot's schema. Any future re-onboarding pipeline must use a different key.
 ## Phase G — Status snapshot for the operational record
 
 ```powershell
-python -m pipeline.cleanup.runner status > cleanup_status_$(Get-Date -Format yyyyMMdd).json
+uv run python -m pipeline.cleanup.runner status > cleanup_status_$(Get-Date -Format yyyyMMdd).json
 ```
 
 Append a "Cleanup" section to `salvation.md` with: cutover date, commit hash,
