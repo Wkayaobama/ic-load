@@ -57,7 +57,7 @@ def select_body_entity(entity: str, schema: dict[str, Any] | None = None, run: d
             stg.icalps_comp_website,
             stg.icalps_addresscity,
             stg.icalps_address_country,
-            stg.icalps_company_state AS icalps_address_state,
+            stg.icalps_address_state,
             stg.icalps_address_postcode,
             stg.icalps_company_sector AS icalps_industry_drill_down,
             stg.icalps_companyphone,

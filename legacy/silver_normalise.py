@@ -418,7 +418,7 @@ class SilverNormaliser:
                     ), 500
                 )                                             AS icalps_companyaddress,
                 Address_City                                  AS icalps_addresscity,
-                Address_State                                 AS icalps_company_state,
+                Address_State                                 AS icalps_address_state,
                 Address_PostCode                              AS icalps_address_postcode,
                 Address_Country                               AS icalps_address_country,
                 CASE WHEN LENGTH({country_sql}) = 2
