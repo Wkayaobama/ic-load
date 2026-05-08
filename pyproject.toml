@@ -32,6 +32,8 @@ dependencies = [
     "pandas>=2.0",
     "psycopg2-binary>=2.9",
     "PyYAML>=6.0",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +48,8 @@ dbt = [
 # For repo-local tests and type checks.
 dev = [
     "pytest>=7.0",
+    "requests-mock>=1.11",
+    "beautifulsoup4>=4.12",
 ]
 
 [tool.uv]

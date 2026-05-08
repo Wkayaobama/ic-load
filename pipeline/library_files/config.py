@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 
 @dataclass(frozen=True)
@@ -17,11 +17,19 @@ class Settings:
 
     @classmethod
     def from_env(cls, *, token_var: str = "HUBSPOT_SANDBOX_TOKEN") -> "Settings":
-        load_dotenv()
+        # Two-stage env load so multiple worktrees can share one canonical
+        # `.env.icalps` at the parent (Codebase/) level while still allowing a
+        # worktree-local `.env` to override individual values for ad-hoc work.
+        # Process env beats file values; worktree `.env` beats parent
+        # `.env.icalps`. find_dotenv walks up from cwd, so this works from any
+        # subdirectory inside any worktree.
+        load_dotenv(find_dotenv(filename=".env.icalps", usecwd=True))
+        load_dotenv(find_dotenv(usecwd=True), override=True)
         token = os.environ.get(token_var)
         if not token:
             raise RuntimeError(
-                f"{token_var} is not set. Copy .env.example to .env and fill it in."
+                f"{token_var} is not set. Populate either .env.icalps at the "
+                f"Codebase root or .env in this worktree."
             )
         base_dir = os.environ.get("LIBRARY_BASE_DIR")
         return cls(
