@@ -579,7 +579,7 @@ class SilverNormaliser:
                 {_col_or_null("Pers_Department", "icalps_department")},
                 {contact_status_sql}                          AS icalps_contactstatus,
                 {company_lang_contact_sql}                    AS icalps_language,
-                {_col_or_null("Pers_Source")},
+                {"Pers_Source AS icalps_pers_source" if "Pers_Source" in contact_cols else "NULL AS icalps_pers_source"},
                 {_col_or_null("Pers_Territory")},
                 {_col_or_null("Pers_WebSite")},
                 {_col_or_null("Pers_CreatedDate")},
