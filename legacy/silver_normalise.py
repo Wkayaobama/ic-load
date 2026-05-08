@@ -714,7 +714,7 @@ class SilverNormaliser:
                 {oppo_category_sql},
                 Oppo_Stage AS icalps_stage,
                 Oppo_Status AS icalps_dealstatus,
-                Oppo_AssignedUserId AS oppo_assigneduserid,
+                Oppo_AssignedUserId AS icalps_ownerid,
                 {oppo_notes_sql},
                 {oppo_deleted_sql},
                 Oppo_PrimaryCompanyId AS icalps_company_id,

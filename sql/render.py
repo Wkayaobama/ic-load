@@ -137,7 +137,7 @@ def select_body_entity(entity: str, schema: dict[str, Any] | None = None, run: d
             stg.icalps_opendate::timestamp AS icalps_opendate,
             stg.icalps_effectiveclosedate::timestamp AS icalps_effectiveclosedate,
             stg.icalps_companyphone,
-            stg.oppo_assigneduserid AS hubspot_owner_id,
+            stg.icalps_ownerid AS hubspot_owner_id,
             stg.icalps_primarydealcompany AS icalps_company_name,
             stg.icalps_primaryoppocontact,
             stg.icalps_dealprimarycontactfirstname AS icalps_contact_firstname,
