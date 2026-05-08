@@ -115,3 +115,43 @@ __all__ = [
     "is_valid_e164",
     "normalise_phone_batch",
 ]
+
+from context.algorithms._instrumentation import log_debug, log_info_with_artifact  # noqa: E402
+
+normalise_phone_e164 = log_debug(
+    normalise_phone_e164,
+    stat_fn=lambda result, raw, **_: {
+        "call_count": 1,
+        "null_input_count": 1 if not raw else 0,
+        "normalized_count": 1 if result is not None else 0,
+        "null_output_count": 1 if result is None else 0,
+    },
+    sample_fn=lambda result, raw, **_: {
+        "input": raw,
+        "output": result,
+    },
+)
+is_valid_e164 = log_debug(
+    is_valid_e164,
+    stat_fn=lambda result, phone, **_: {
+        "call_count": 1,
+        "valid_count": 1 if result else 0,
+        "invalid_count": 0 if result else 1,
+    },
+    sample_fn=lambda result, phone, **_: {
+        "input": phone,
+        "valid": result,
+    },
+)
+
+normalise_phone_batch = log_info_with_artifact(
+    description="Batch E.164 normalization for French-origin phone numbers.",
+    artifact_builder=lambda result, phones, **kw: {
+        "input_count": len(phones),
+        "normalized_count": sum(1 for p in result if p is not None),
+        "null_count": sum(1 for p in result if p is None),
+        "success_rate": round(
+            sum(1 for p in result if p is not None) / len(phones), 4
+        ) if phones else 0,
+    },
+)(normalise_phone_batch)

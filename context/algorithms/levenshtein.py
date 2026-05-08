@@ -157,3 +157,20 @@ def set_scorer(scorer: SimilarityScorer) -> None:
     """Replace the module-level scorer (e.g., inject MCPScorer at startup)."""
     global _DEFAULT_SCORER
     _DEFAULT_SCORER = scorer
+
+
+from context.algorithms._instrumentation import log_debug  # noqa: E402
+
+edit_distance = log_debug(
+    edit_distance,
+    stat_fn=lambda result, a, b, **_: {"call_count": 1},
+    sample_fn=lambda result, a, b, **_: {"a": a[:50], "b": b[:50], "distance": result},
+    max_samples=50,
+)
+similarity = log_debug(
+    similarity,
+    stat_fn=lambda result, a, b, **_: {"call_count": 1},
+    sample_fn=lambda result, a, b, **_: {"a": a[:50], "b": b[:50], "similarity": round(result, 4)},
+    max_samples=50,
+)
+levenshtein_ratio = similarity  # re-point alias to the wrapped version

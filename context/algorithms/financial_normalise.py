@@ -39,3 +39,21 @@ def to_keuros(value: Optional[float]) -> Optional[float]:
     if value != value:  # NaN check without importing math
         return None
     return float(value) / 1000.0
+
+
+from context.algorithms._instrumentation import log_debug  # noqa: E402
+
+to_keuros = log_debug(
+    to_keuros,
+    stat_fn=lambda result, value, **_: {
+        "call_count": 1,
+        "null_input_count": 1 if value is None else 0,
+        "null_output_count": 1 if result is None else 0,
+        "value_sum": result if result is not None else 0,
+        "value_count": 1 if result is not None else 0,
+    },
+    sample_fn=lambda result, value, **_: {
+        "input_eur": value,
+        "output_keur": result,
+    },
+)

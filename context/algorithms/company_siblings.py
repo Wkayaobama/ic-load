@@ -330,3 +330,88 @@ def flag_cross_group_candidates(
                 ))
 
     return candidates
+
+
+from context.algorithms._instrumentation import log_debug, log_info_with_artifact  # noqa: E402
+
+clean_domain = log_debug(
+    clean_domain,
+    stat_fn=lambda result, url, **_: {
+        "call_count": 1,
+        "empty_output_count": 1 if not result else 0,
+    },
+    sample_fn=lambda result, url, **_: {
+        "input": str(url)[:80] if url is not None else None,
+        "output": result,
+    },
+)
+company_root = log_debug(
+    company_root,
+    stat_fn=lambda result, name, **_: {
+        "call_count": 1,
+        "empty_output_count": 1 if not result else 0,
+    },
+    sample_fn=lambda result, name, **_: {
+        "input": str(name)[:80] if name is not None else None,
+        "output": result,
+    },
+)
+find_plural_domain_groups = log_debug(
+    find_plural_domain_groups,
+    stat_fn=lambda result, df, **_: {
+        "call_count": 1,
+        "plural_groups_found": len(result),
+    },
+    sample_fn=lambda result, df, **_: {
+        "input_rows": len(df),
+        "plural_groups": list(result.keys()),
+    },
+)
+select_canonical_parent = log_debug(
+    select_canonical_parent,
+    stat_fn=lambda result, group_df, gold_df, **_: {
+        "call_count": 1,
+        "unresolved_count": 1 if (result is None or result.unresolved) else 0,
+    },
+    sample_fn=lambda result, group_df, gold_df, **_: {
+        "domain": result.clean_domain if result else None,
+        "unresolved": result.unresolved if result else True,
+        "parent_id": result.parent_comp_id if result and not result.unresolved else None,
+        "children_count": len(result.children) if result and not result.unresolved else 0,
+    },
+)
+assign_sibling_indices = log_debug(
+    assign_sibling_indices,
+    stat_fn=lambda result, group, **_: {
+        "call_count": 1,
+        "rows_assigned": len(result),
+    },
+    sample_fn=lambda result, group, **_: {
+        "domain": group.clean_domain,
+        "assignments": result,
+    },
+)
+
+detect_all_sibling_groups = log_info_with_artifact(
+    description="Find plural domain groups, resolve canonical parents, assign sibling indices.",
+    artifact_builder=lambda result, staging_df, gold_df, **kw: {
+        "input_rows": len(staging_df),
+        "gold_rows": len(gold_df),
+        "resolved_groups": len(result[0]),
+        "unresolved_domains": result[1],
+        "resolved_domains": [g.clean_domain for g in result[0]],
+        "group_sizes": {g.clean_domain: g.size for g in result[0]},
+    },
+)(detect_all_sibling_groups)
+
+flag_cross_group_candidates = log_info_with_artifact(
+    description="Levenshtein-based cross-group candidate flagging for operator review.",
+    artifact_builder=lambda result, plural_groups, **kw: {
+        "groups_compared": len(plural_groups),
+        "candidates_flagged": len(result),
+        "candidates": [
+            {"domain_a": c.domain_a, "domain_b": c.domain_b, "similarity": c.name_similarity}
+            for c in result
+        ],
+    },
+)(flag_cross_group_candidates)

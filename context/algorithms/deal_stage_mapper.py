@@ -202,3 +202,53 @@ def list_all_mappings() -> list[dict]:
             "hubspot_stage_name": hs_stage,
         })
     return rows
+
+
+from context.algorithms._instrumentation import log_debug, log_info_with_artifact  # noqa: E402
+
+normalize_stage = log_debug(
+    normalize_stage,
+    stat_fn=lambda result, stage, **_: {
+        "call_count": 1,
+        "unknown_count": 1 if result is None else 0,
+    },
+    sample_fn=lambda result, stage, **_: {
+        "input": stage,
+        "canonical": result,
+    },
+)
+normalize_outcome = log_debug(
+    normalize_outcome,
+    stat_fn=lambda result, outcome, **_: {
+        "call_count": 1,
+        "unknown_count": 1 if result is None else 0,
+    },
+    sample_fn=lambda result, outcome, **_: {
+        "input": outcome,
+        "canonical": result,
+    },
+)
+map_deal_stage = log_debug(
+    map_deal_stage,
+    stat_fn=lambda result, pipeline, stage, outcome, **_: {
+        "call_count": 1,
+    },
+    sample_fn=lambda result, pipeline, stage, outcome, **_: {
+        "pipeline": pipeline,
+        "stage": stage,
+        "outcome": outcome,
+        "hubspot_stage": result.stage_name,
+        "stage_id": result.stage_id,
+    },
+)
+
+list_all_mappings = log_info_with_artifact(
+    description="Enumerate all IC'ALPS -> HubSpot pipeline+stage+outcome mappings.",
+    artifact_builder=lambda result, **kw: {
+        "total_mappings": len(result),
+        "pipelines": list({r["icalps_pipeline"] for r in result}),
+        "stages": list({r["icalps_stage"] for r in result}),
+        "hubspot_stage_names": list({r["hubspot_stage_name"] for r in result}),
+        "mappings": result,
+    },
+)(list_all_mappings)

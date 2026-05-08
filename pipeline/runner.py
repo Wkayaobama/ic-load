@@ -326,13 +326,15 @@ def _run_silver(
             skip_reason = "dry_run" if dry_run else "preview"
             transition(ctx, PipelineStage.SILVER_NORMALISE, StageStatus.SKIPPED, reason=skip_reason)
         else:
+            from context.algorithms._instrumentation import algorithm_session
             try:
                 normaliser = hooks.silver_normaliser_factory()
                 method_name = f"normalise_{entity}"
-                if hasattr(normaliser, method_name):
-                    getattr(normaliser, method_name)()
-                else:
-                    normaliser.run_all()
+                with algorithm_session(session_id=ctx.run_id):
+                    if hasattr(normaliser, method_name):
+                        getattr(normaliser, method_name)()
+                    else:
+                        normaliser.run_all()
             except Exception as exc:
                 transition(ctx, PipelineStage.SILVER_NORMALISE, StageStatus.FAILED, reason=str(exc))
             transition(ctx, PipelineStage.SILVER_NORMALISE, StageStatus.SUCCESS)
