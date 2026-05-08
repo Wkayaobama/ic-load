@@ -139,3 +139,50 @@ class HubSpotClient:
         resp = self._session.put(url, timeout=self.timeout_s)
         resp.raise_for_status()
         return resp.json() if resp.content else {}
+
+    # -- Cleanup surface (used by pipeline.cleanup) --------------------------
+    # Path uses *plural* object types here: 'companies', 'contacts', 'deals'.
+    # That matches HubSpot's batch and schema endpoints (different from the v4
+    # singular convention used by associate_default above).
+
+    def batch_archive_objects(
+        self,
+        object_type: str,
+        ids: Iterable[str],
+    ) -> dict:
+        """POST /crm/v3/objects/{object_type}/batch/archive.
+        Accepts up to 100 ids per call. Returns {} on the typical 204 response."""
+        url = f"{self.base_url}/crm/v3/objects/{object_type}/batch/archive"
+        payload = {"inputs": [{"id": str(i)} for i in ids]}
+        resp = self._session.post(url, json=payload, timeout=self.timeout_s)
+        resp.raise_for_status()
+        return resp.json() if resp.content else {}
+
+    def gdpr_delete_contact(
+        self,
+        *,
+        contact_id: Optional[str] = None,
+        email: Optional[str] = None,
+    ) -> None:
+        """POST /crm/v3/objects/contacts/gdpr-delete. IRREVERSIBLE.
+        Either contact_id or email is required (HubSpot accepts either)."""
+        if not contact_id and not email:
+            raise ValueError("gdpr_delete_contact requires contact_id or email")
+        url = f"{self.base_url}/crm/v3/objects/contacts/gdpr-delete"
+        payload: dict = {}
+        if contact_id:
+            payload["objectId"] = str(contact_id)
+        if email:
+            payload["idProperty"] = "email"
+            payload["objectId"] = email
+        resp = self._session.post(url, json=payload, timeout=self.timeout_s)
+        resp.raise_for_status()
+
+    def delete_property(self, object_type: str, property_name: str) -> int:
+        """DELETE /crm/v3/properties/{object_type}/{property_name}.
+        Returns the HTTP status. 404 means already gone — caller treats as success."""
+        url = f"{self.base_url}/crm/v3/properties/{object_type}/{property_name}"
+        resp = self._session.delete(url, timeout=self.timeout_s)
+        if resp.status_code not in (204, 404):
+            resp.raise_for_status()
+        return resp.status_code

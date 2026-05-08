@@ -1,0 +1,186 @@
+"""Postgres-backed ledger for the cleanup pipeline.
+
+Mirrors ``pipeline.library_files.ledger.PostgresLedger`` shape: schema-name
+allowlist, init from a SQL file, UPSERT on PK so re-runs converge.
+
+Tables (DDL in sql/init_cleanup_ledger.sql):
+    staging.fct_cleanup_manifest    — Phase B snapshot
+    staging.fct_cleanup_archives    — Phase E archive outcomes
+    staging.fct_cleanup_gdpr        — Phase E2 GDPR-delete outcomes
+    staging.fct_cleanup_properties  — Phase F property-deletion outcomes
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Iterable, Mapping
+
+import psycopg2  # type: ignore[import-not-found]
+
+
+_SCHEMA_NAME_RX = re.compile(r"^[a-z_][a-z0-9_]*$")
+_SQL_DIR = Path(__file__).parent / "sql"
+
+
+class CleanupLedger:
+    def __init__(self, dsn: str, *, schema: str = "staging") -> None:
+        if not _SCHEMA_NAME_RX.match(schema):
+            raise ValueError(
+                f"invalid schema name {schema!r}: must match {_SCHEMA_NAME_RX.pattern}"
+            )
+        self.dsn = dsn
+        self.schema = schema
+
+    def _connect(self):
+        return psycopg2.connect(self.dsn)
+
+    # -- DDL -----------------------------------------------------------------
+
+    def bootstrap(self) -> None:
+        ddl = (_SQL_DIR / "init_cleanup_ledger.sql").read_text(encoding="utf-8")
+        sql = ddl.format(schema=self.schema)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            conn.commit()
+
+    # -- Manifest (Phase B) --------------------------------------------------
+
+    def upsert_manifest_rows(self, rows: Iterable[Mapping[str, object]]) -> int:
+        sql = f"""
+            INSERT INTO {self.schema}.fct_cleanup_manifest
+                (object_type, hubspot_id, legacy_id, label)
+            VALUES (%(object_type)s, %(hubspot_id)s, %(legacy_id)s, %(label)s)
+            ON CONFLICT (object_type, hubspot_id) DO UPDATE SET
+                legacy_id   = EXCLUDED.legacy_id,
+                label       = EXCLUDED.label,
+                snapshot_at = now()
+        """
+        n = 0
+        with self._connect() as conn, conn.cursor() as cur:
+            for row in rows:
+                cur.execute(sql, dict(row))
+                n += 1
+            conn.commit()
+        return n
+
+    def manifest_ids(self, object_type: str) -> list[tuple[str, str | None, str | None]]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT hubspot_id, legacy_id, label
+                FROM {self.schema}.fct_cleanup_manifest
+                WHERE object_type = %s
+                ORDER BY hubspot_id
+                """,
+                (object_type,),
+            )
+            return [(r[0], r[1], r[2]) for r in cur.fetchall()]
+
+    # -- Archive ledger (Phase E) -------------------------------------------
+
+    def archive_skip_set(self, object_type: str) -> set[str]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT hubspot_id FROM {self.schema}.fct_cleanup_archives
+                WHERE object_type = %s AND status = 'archived'
+                """,
+                (object_type,),
+            )
+            return {r[0] for r in cur.fetchall()}
+
+    def record_archive(self, *, object_type: str, hubspot_id: str, status: str, error: str | None = None) -> None:
+        sql = f"""
+            INSERT INTO {self.schema}.fct_cleanup_archives
+                (object_type, hubspot_id, status, error, attempts, last_attempt_at)
+            VALUES (%s, %s, %s, %s, 1, now())
+            ON CONFLICT (object_type, hubspot_id) DO UPDATE SET
+                status          = EXCLUDED.status,
+                error           = EXCLUDED.error,
+                attempts        = {self.schema}.fct_cleanup_archives.attempts + 1,
+                last_attempt_at = now()
+        """
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (object_type, hubspot_id, status, error))
+            conn.commit()
+
+    # -- GDPR ledger (Phase E2) ---------------------------------------------
+
+    def gdpr_skip_set(self, object_type: str = "contacts") -> set[str]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT hubspot_id FROM {self.schema}.fct_cleanup_gdpr
+                WHERE object_type = %s AND status = 'purged'
+                """,
+                (object_type,),
+            )
+            return {r[0] for r in cur.fetchall()}
+
+    def record_gdpr(self, *, object_type: str, hubspot_id: str, status: str, error: str | None = None) -> None:
+        sql = f"""
+            INSERT INTO {self.schema}.fct_cleanup_gdpr
+                (object_type, hubspot_id, status, error, attempts, last_attempt_at)
+            VALUES (%s, %s, %s, %s, 1, now())
+            ON CONFLICT (object_type, hubspot_id) DO UPDATE SET
+                status          = EXCLUDED.status,
+                error           = EXCLUDED.error,
+                attempts        = {self.schema}.fct_cleanup_gdpr.attempts + 1,
+                last_attempt_at = now()
+        """
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (object_type, hubspot_id, status, error))
+            conn.commit()
+
+    # -- Property ledger (Phase F) ------------------------------------------
+
+    def property_skip_set(self, object_type: str) -> set[str]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT property_name FROM {self.schema}.fct_cleanup_properties
+                WHERE object_type = %s AND status IN ('deleted', 'already_absent')
+                """,
+                (object_type,),
+            )
+            return {r[0] for r in cur.fetchall()}
+
+    def record_property(
+        self,
+        *,
+        object_type: str,
+        property_name: str,
+        status: str,
+        http_status: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        sql = f"""
+            INSERT INTO {self.schema}.fct_cleanup_properties
+                (object_type, property_name, status, http_status, error, attempts, last_attempt_at)
+            VALUES (%s, %s, %s, %s, %s, 1, now())
+            ON CONFLICT (object_type, property_name) DO UPDATE SET
+                status          = EXCLUDED.status,
+                http_status     = EXCLUDED.http_status,
+                error           = EXCLUDED.error,
+                attempts        = {self.schema}.fct_cleanup_properties.attempts + 1,
+                last_attempt_at = now()
+        """
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (object_type, property_name, status, http_status, error))
+            conn.commit()
+
+    # -- Reporting -----------------------------------------------------------
+
+    def status_summary(self) -> dict[str, list[tuple[str, str, int]]]:
+        out: dict[str, list[tuple[str, str, int]]] = {}
+        queries = {
+            "manifest":   f"SELECT object_type, 'snapshotted'::text, COUNT(*) FROM {self.schema}.fct_cleanup_manifest    GROUP BY object_type ORDER BY object_type",
+            "archives":   f"SELECT object_type, status,                COUNT(*) FROM {self.schema}.fct_cleanup_archives    GROUP BY object_type, status ORDER BY object_type, status",
+            "gdpr":       f"SELECT object_type, status,                COUNT(*) FROM {self.schema}.fct_cleanup_gdpr        GROUP BY object_type, status ORDER BY object_type, status",
+            "properties": f"SELECT object_type, status,                COUNT(*) FROM {self.schema}.fct_cleanup_properties  GROUP BY object_type, status ORDER BY object_type, status",
+        }
+        with self._connect() as conn, conn.cursor() as cur:
+            for label, q in queries.items():
+                cur.execute(q)
+                out[label] = [(r[0], r[1], int(r[2])) for r in cur.fetchall()]
+        return out
