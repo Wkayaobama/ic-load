@@ -38,7 +38,9 @@ class CleanupLedger:
 
     def bootstrap(self) -> None:
         ddl = (_SQL_DIR / "init_cleanup_ledger.sql").read_text(encoding="utf-8")
-        sql = ddl.format(schema=self.schema)
+        # str.replace, not str.format — see library_files/silver_library.py
+        # for rationale (any literal {...} in SQL breaks str.format).
+        sql = ddl.replace("{schema}", self.schema)
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql)
             conn.commit()
