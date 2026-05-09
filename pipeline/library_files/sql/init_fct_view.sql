@@ -1,12 +1,6 @@
 -- Phase 7b — staging.fct_library_files (plain SQL view, no dbt for v1)
--- Composes stg_library_normalised with hubspot.companies / contacts / deals
+-- Composes stg_library_normalised with hubspot.{companies,contacts,deals}
 -- via the icalps_*_id reconciliation keys.
---
--- NB: Python loads this SQL via str.format(schema=...) so any literal {...}
--- in this file is interpreted as a named placeholder. Keep the only {...}
--- in this file as the {schema} placeholder; comments must not use {a,b,c}
--- shorthand (early version used hubspot.{companies,contacts,deals} and that
--- broke install_fct_view with KeyError 'companies,contacts,deals').
 
 CREATE OR REPLACE VIEW {schema}.fct_library_files AS
 SELECT

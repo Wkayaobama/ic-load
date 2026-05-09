@@ -174,14 +174,18 @@ class LibrarySilverNormaliser:
 
     def _bootstrap_table(self) -> None:
         ddl = (_SQL_DIR / "init_silver.sql").read_text(encoding="utf-8")
+        # Use str.replace, not str.format. format() interprets any literal
+        # {...} in the SQL (comments, JSON literals, array constructors) as a
+        # named placeholder. self.schema has already been validated against
+        # _SCHEMA_NAME_RX, so direct interpolation is safe.
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(ddl.format(schema=self.schema))
+            cur.execute(ddl.replace("{schema}", self.schema))
             conn.commit()
 
     def install_fct_view(self) -> None:
         ddl = (_SQL_DIR / "init_fct_view.sql").read_text(encoding="utf-8")
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(ddl.format(schema=self.schema))
+            cur.execute(ddl.replace("{schema}", self.schema))
             conn.commit()
 
     def _resolve_owners(

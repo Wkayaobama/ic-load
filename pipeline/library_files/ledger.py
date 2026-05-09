@@ -47,7 +47,8 @@ class PostgresLedger:
 
     def bootstrap(self) -> None:
         ddl = (_SQL_DIR / "init_ledger.sql").read_text(encoding="utf-8")
-        sql = ddl.format(schema=self.schema)
+        # str.replace, not str.format — see silver_library.py for rationale.
+        sql = ddl.replace("{schema}", self.schema)
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql)
             conn.commit()
