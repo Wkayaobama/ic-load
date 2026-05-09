@@ -378,6 +378,7 @@ class SilverNormaliser:
 
         comp_deleted_sql = "Comp_Deleted" if "Comp_Deleted" in company_cols else "NULL"
 
+        has_primary_id    = "Comp_PrimaryPersonId" in company_cols
         has_primary_first = "Comp_PrimaryPersonFirstName" in company_cols
         has_primary_last  = "Comp_PrimaryPersonLastName" in company_cols
         if has_primary_first or has_primary_last:
@@ -427,7 +428,8 @@ class SilverNormaliser:
                 Company_Email                                 AS icalps_companyemail,
                 {company_linkedin_sql}                        AS icalps_linkedin_url,
 
-                -- Primary contact name (first + last concatenated)
+                -- Primary contact
+                {"Comp_PrimaryPersonId" if has_primary_id else "NULL"} AS icalps_primarycontact_id,
                 {primary_contact_sql}                         AS icalps_companyprimarycontact,
 
                 -- Owner raw (resolve to HubSpot owner ID in owner resolution step)
