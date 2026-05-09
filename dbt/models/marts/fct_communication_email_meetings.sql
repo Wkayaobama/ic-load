@@ -164,10 +164,13 @@ with_hubspot_fks as (
         hscomp.stacksync_record_id_9vpp8v as hubspot_company_record_id
 
     from deduped d
+    -- StackSync exposes hubspot.*.icalps_*_id as varchar; cast staging
+    -- bigint -> text rather than text -> bigint (the latter fails on any
+    -- non-numeric value HubSpot allows).
     left join "pg_hubspot"."hubspot"."contacts" hsc
-        on d.legacy_contact_id = cast(hsc.icalps_contact_id as bigint)
+        on cast(d.legacy_contact_id as text) = hsc.icalps_contact_id
     left join "pg_hubspot"."hubspot"."companies" hscomp
-        on d.legacy_company_id = cast(hscomp.icalps_company_id as bigint)
+        on cast(d.legacy_company_id as text) = hscomp.icalps_company_id
 
 )
 

@@ -45,7 +45,10 @@ contacts_pointing_to_sibling as (
         hsc.associatedcompanyid        as associated_company_id
     from pg_hubspot.staging.stg_contact_normalised c
     inner join sibling_companies sc
-        on c.icalps_company_id::bigint = sc.legacy_company_id
+        -- StackSync exposes hubspot.companies.icalps_company_id as varchar.
+        -- Cast staging side bigint -> text rather than the reverse, which
+        -- would fail on any non-numeric value HubSpot might allow.
+        on c.icalps_company_id = sc.legacy_company_id::text
     left join pg_hubspot.hubspot.contacts hsc
         on hsc.icalps_contact_id = c.icalps_contact_id::text
     where c.icalps_company_id is not null

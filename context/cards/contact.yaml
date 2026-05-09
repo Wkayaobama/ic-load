@@ -109,8 +109,11 @@ upsert:
   load_status_filter: ["NEW", "MODIFIED"]
   conflict_action: DO UPDATE
   associatedcompanyid_resolution: |
+    -- StackSync mirrors hubspot.companies.icalps_company_id as varchar.
+    -- Cast the bigint side to text instead of the reverse to keep this
+    -- robust against any non-numeric value HubSpot might allow.
     (SELECT id::text FROM hubspot.companies
-     WHERE icalps_company_id = stg.pers_companyid::bigint
+     WHERE icalps_company_id = stg.pers_companyid::text
      LIMIT 1)
   exclude_from_upsert:
     - createdate

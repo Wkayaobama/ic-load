@@ -52,7 +52,9 @@ deals_pointing_to_sibling as (
         hsd.id                         as hubspot_deal_id
     from pg_hubspot.staging.stg_opportunity_normalised d
     inner join sibling_companies sc
-        on d.icalps_company_id::bigint = sc.legacy_company_id
+        -- StackSync exposes hubspot.*.icalps_*_id as varchar; cast staging
+        -- bigint -> text rather than the brittle reverse direction.
+        on d.icalps_company_id = sc.legacy_company_id::text
     left join pg_hubspot.hubspot.deals hsd
         on hsd.icalps_deal_id = d.icalps_deal_id::text
     where d.icalps_company_id is not null

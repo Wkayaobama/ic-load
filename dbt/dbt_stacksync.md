@@ -193,7 +193,7 @@ SELECT
     <typeId>
 FROM hubspot.emails e
 JOIN staging.fct_comm_emails_ready r ON e.unique_id = r.unique_id
-JOIN hubspot.contacts c ON r.legacy_contact_id = cast(c.icalps_contact_id as bigint)
+JOIN hubspot.contacts c ON r.legacy_contact_id::text = c.icalps_contact_id
 WHERE r.associated_contact_id IS NULL
   AND r.legacy_contact_id IS NOT NULL
   AND c.stacksync_record_id_nd85zc IS NOT NULL

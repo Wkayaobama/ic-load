@@ -8,8 +8,11 @@ The runner translates the operator's choice into a SELECT against
 ``hubspot.{object_type}`` (or against the chosen view) and pipes the rows into
 ``CleanupLedger.upsert_manifest_rows``.
 
-Per project convention all icalps_*_id columns are BIGINT and the natural
-filter is ``IS NOT NULL`` — never ``<> ''``. We never compare BIGINT to ''.
+StackSync mirrors `hubspot.*.icalps_*_id` as VARCHAR/TEXT, even though the
+project CLAUDE.md historically described them as BIGINT. Use ``IS NOT NULL``
+and ``<> ''`` as the empty-check (varchar can hold the empty string in a way
+bigint cannot). Casts in JOINs should go bigint → text, never text → bigint
+— the latter fails on any non-numeric value HubSpot might allow.
 """
 from __future__ import annotations
 
@@ -62,10 +65,13 @@ def plan_from_where(object_type: str, where: str | None) -> SelectionPlan:
     meta = _OBJECT_META[object_type]
     legacy_col = meta["legacy_id_col"]
     label_expr = meta["label_expr"]
-    predicate = where.strip() if where else f"{legacy_col} IS NOT NULL"
+    # icalps_*_id is varchar in StackSync's mirror — guard against both NULL
+    # and empty string. The legacy bigint assumption was wrong (see
+    # init_fct_view.sql cast comment for the discovery and the fix).
+    predicate = where.strip() if where else f"{legacy_col} IS NOT NULL AND {legacy_col} <> ''"
     sql = (
         f"SELECT id::text AS hubspot_id, "
-        f"{legacy_col}::text AS legacy_id, "
+        f"{legacy_col} AS legacy_id, "
         f"{label_expr} AS label "
         f"FROM hubspot.{object_type} "
         f"WHERE {predicate}"
