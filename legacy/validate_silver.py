@@ -150,7 +150,7 @@ class SilverValidator:
             FROM staging.stg_company_normalised
             WHERE icalps_address_country IS NOT NULL
               AND icalps_address_country != ''
-              AND icalps_country IS NULL
+              AND icalps_full_country IS NULL
             GROUP BY 1 ORDER BY 2 DESC LIMIT 20
         """)
         if not unmapped_countries.empty:

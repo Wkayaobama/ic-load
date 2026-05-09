@@ -420,11 +420,7 @@ class SilverNormaliser:
                 Address_City                                  AS icalps_addresscity,
                 Address_State                                 AS icalps_address_state,
                 Address_PostCode                              AS icalps_address_postcode,
-                Address_Country                               AS icalps_address_country,
-                CASE WHEN LENGTH({country_sql}) = 2
-                     THEN UPPER({country_sql})
-                     ELSE NULL
-                END                                           AS icalps_country,
+                {icalps_country_expr}                         AS icalps_address_country,
                 {full_country_sql}                            AS icalps_full_country,
 
                 -- Contact info
