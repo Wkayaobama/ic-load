@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .client import HubSpotClient
 from .config import Settings
+from .ledger import PostgresLedger
 from .overrides import SandboxOverrideMap
 from .sources import CsvLibraryReader, LibraryRecord, PostgresLibraryReader
 from .uploader import HubSpotFileUploader, LibraryFileRow
@@ -91,7 +92,15 @@ def _records_to_rows(
 def cmd_migrate(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
     client = HubSpotClient.from_settings(settings)
-    uploader = HubSpotFileUploader(client)
+
+    # Wire the postgres-backed idempotency ledger from Phase 5. Re-runs of the
+    # same legacy_library_id skip the actual REST calls when the ledger shows
+    # a prior 'uploaded' / 'attached' status. Tables are created on first use.
+    ledger_obj: PostgresLedger | None = None
+    if settings.prod_postgres_dsn:
+        ledger_obj = PostgresLedger(settings.prod_postgres_dsn)
+        ledger_obj.bootstrap()
+    uploader = HubSpotFileUploader(client, ledger=ledger_obj)
 
     upload_live, attach_live = _read_approval_gates()
     _print_gate_banner(upload_live, attach_live)
