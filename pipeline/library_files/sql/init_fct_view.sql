@@ -17,7 +17,11 @@ SELECT
     s.icalps_owner_email      AS icalps_owner_email,
     s.icalps_owner_fullname   AS icalps_owner_fullname
 FROM {schema}.stg_library_normalised s
-LEFT JOIN hubspot.companies hc ON hc.icalps_company_id = s.legacy_company_id
-LEFT JOIN hubspot.contacts  hp ON hp.icalps_contact_id = s.legacy_contact_id
-LEFT JOIN hubspot.deals     hd ON hd.icalps_deal_id    = s.legacy_deal_id
+-- StackSync mirrors hubspot.*.icalps_*_id as varchar, not bigint as the
+-- project CLAUDE.md suggests. Cast the staging bigint side to text for
+-- the join. Casting to text always succeeds; the reverse (text → bigint)
+-- would fail if HubSpot ever has a non-numeric value in that column.
+LEFT JOIN hubspot.companies hc ON hc.icalps_company_id = s.legacy_company_id::text
+LEFT JOIN hubspot.contacts  hp ON hp.icalps_contact_id = s.legacy_contact_id::text
+LEFT JOIN hubspot.deals     hd ON hd.icalps_deal_id    = s.legacy_deal_id::text
 WHERE COALESCE(hc.id, hp.id, hd.id) IS NOT NULL;
