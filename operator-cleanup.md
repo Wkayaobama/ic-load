@@ -171,6 +171,90 @@ the manifest count from Phase B. Ledger fills with `status='dry_run'`.
 
 ---
 
+## Phase D2 — Sandbox probe (optional)
+
+Exercises the full archive → ledger code path against the sandbox HubSpot
+portal before any prod write. Patterned after library_files Phase 7c.
+
+Useful catch-classes: wrong object-type pluralisation in the URL, malformed
+batch payload, ledger UPSERT failures, idempotent re-run behaviour. Not a
+substitute for the dry-run, which is cheaper and catches selection bugs.
+
+### Step D2.1 — seed test records in sandbox HubSpot
+
+In the sandbox portal (`HUBSPOT_SANDBOX_PORTAL_ID=49610528`), manually create
+three companies via UI or REST. Set `icalps_company_id` on each to a
+distinguishable test value (e.g. `999000001`, `999000002`, `999000003`).
+Note each sandbox HubSpot record id (visible in the company URL).
+
+### Step D2.2 — materialise a sandbox-probe view in postgres
+
+```sql
+CREATE OR REPLACE VIEW staging.fct_cleanup_sandbox_probe_companies AS
+SELECT '<sandbox_id_1>'::text AS hubspot_id, '999000001' AS legacy_id, 'sandbox-probe-1' AS label
+UNION ALL
+SELECT '<sandbox_id_2>'::text, '999000002', 'sandbox-probe-2'
+UNION ALL
+SELECT '<sandbox_id_3>'::text, '999000003', 'sandbox-probe-3';
+```
+
+### Step D2.3 — shadow the prod token with the sandbox token for this shell
+
+```powershell
+$prod_token_backup = $env:HUBSPOT_PROD_TOKEN
+$env:HUBSPOT_PROD_TOKEN = $env:HUBSPOT_SANDBOX_TOKEN
+```
+
+The cleanup runner reads `HUBSPOT_PROD_TOKEN`. Shadowing it keeps the runner
+unmodified while routing this session's REST calls to sandbox.
+
+### Step D2.4 — snapshot from the sandbox-probe view, then archive
+
+```powershell
+uv run python -m pipeline.cleanup.runner snapshot --object companies `
+    --source-view staging.fct_cleanup_sandbox_probe_companies
+
+# Dry-run first
+Remove-Item env:ICALPS_APPROVE_ARCHIVE -ErrorAction SilentlyContinue
+uv run python -m pipeline.cleanup.runner archive --object companies
+
+# Live
+$env:ICALPS_APPROVE_ARCHIVE = "1"
+uv run python -m pipeline.cleanup.runner archive --object companies
+```
+
+### Step D2.5 — verify in sandbox HubSpot UI
+
+The three test companies should appear under "Recently deleted." The ledger
+shows `status='archived'` for the sandbox ids. Re-running the archive command
+should be a no-op (idempotency check).
+
+### Step D2.6 — cleanup the probe state
+
+```powershell
+# Restore the real prod token
+$env:HUBSPOT_PROD_TOKEN = $prod_token_backup
+Remove-Item env:ICALPS_APPROVE_ARCHIVE
+```
+
+```sql
+-- Drop the probe view and its ledger rows so the prod ledger is clean
+DROP VIEW staging.fct_cleanup_sandbox_probe_companies;
+DELETE FROM staging.fct_cleanup_manifest  WHERE label LIKE 'sandbox-probe-%';
+DELETE FROM staging.fct_cleanup_archives  WHERE hubspot_id IN ('<sandbox_id_1>','<sandbox_id_2>','<sandbox_id_3>');
+```
+
+### Pass criterion for Phase D2
+
+- All three test companies show in sandbox "Recently deleted"
+- Archive ledger contains the three `status='archived'` rows during the probe
+- Re-running archive is idempotent (no new rows, no errors)
+- After cleanup queries, no probe rows remain in any `fct_cleanup_*` table
+
+If any of those fail, do not proceed to Phase E. Triage in sandbox first.
+
+---
+
 ## Phase E — Live archive (gated)
 
 Order: deals → contacts → companies. Cosmetic, not technical — archives don't
