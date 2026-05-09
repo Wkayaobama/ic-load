@@ -511,6 +511,9 @@ class SilverNormaliser:
             df["icalps_canonical_domain"] = None
             df["icalps_sibling_index"] = None
 
+        _drop = {'comp_updateddate', 'icalps_company_sector', 'owner_firstname', 'owner_lastname', 'comp_currencyid'}
+        df = df[[c for c in df.columns if c.lower() not in _drop]]
+
         # Convert pandas StringDtype columns to object for DuckDB compatibility
         for col in df.columns:
             if isinstance(df[col].dtype, pd.StringDtype) or df[col].dtype.name in ('str', 'string'):
@@ -643,6 +646,14 @@ class SilverNormaliser:
         """).df()
         df["icalps_businessphone"] = raw["Person_Phone_Business"].apply(_normalise_phone)
         df["icalps_mobilephone"]   = raw["Person_Phone_Mobile"].apply(_normalise_phone)
+
+        _drop = {
+            'icalps_street_address', 'pers_createddate', 'icalps_owner_email', 'pers_createdby',
+            'pers_updateddate', 'company_type', 'pers_deleted', 'icalps_full_address',
+            'icalps_language', 'icalps_department', 'pers_middlename', 'pers_territory',
+            'pers_website', 'pers_suffix', 'pers_gender',
+        }
+        df = df[[c for c in df.columns if c.lower() not in _drop]]
 
         self.con.register("stg_contact_normalised_df", df)
         return _duckdb_to_pg(self.con, "stg_contact_normalised_df", "staging.stg_contact_normalised")
@@ -833,6 +844,12 @@ class SilverNormaliser:
         # Phone normalisation (E.164) — same logic as stg_company_normalised
         if "icalps_companyphone" in df.columns:
             df["icalps_companyphone"] = df["icalps_companyphone"].apply(_normalise_phone)
+
+        _drop = {
+            'company_language', 'oppo_createddate', 'oppo_updateddate', 'user_fullname',
+            'icalps_primaryoppocontact', 'oppo_category', 'icalps_effectiveclosedate', 'person_email',
+        }
+        df = df[[c for c in df.columns if c.lower() not in _drop]]
 
         self.con.register("stg_opportunity_normalised_df", df)
         return _duckdb_to_pg(self.con, "stg_opportunity_normalised_df", "staging.stg_opportunity_normalised")
