@@ -786,7 +786,7 @@ class SilverNormaliser:
                                 ',', '.'
                             ), ' ', ''
                         )
-                    AS DOUBLE), 0.0)                          AS cc_net,
+                    AS DOUBLE), 0.0)                          AS icalps_netamount_k__,
 
                 -- Deduplication rank (keep latest by UpdatedDate)
                 ROW_NUMBER() OVER (
@@ -826,16 +826,16 @@ class SilverNormaliser:
         df = self.con.execute("SELECT * FROM stg_opportunity_deduped").df()
         df["person_email"]          = df["person_email"].str.strip()
 
-        # Convert forecast / cost / cc_net from absolute euros to k€.
+        # Convert forecast / cost / icalps_netamount_k__ from absolute euros to k€.
         # to_keuros is linear (k(a-b) == ka - kb), so applying it to all three
         # keeps them unit-consistent. icalps_oppocertainty is a percent and
         # stays unchanged.
-        df["icalps_forecast"] = df["icalps_forecast"].apply(to_keuros)
-        df["ic_alps_cost"]    = df["ic_alps_cost"].apply(to_keuros)
-        df["cc_net"]          = df["cc_net"].apply(to_keuros)
+        df["icalps_forecast"]        = df["icalps_forecast"].apply(to_keuros)
+        df["ic_alps_cost"]           = df["ic_alps_cost"].apply(to_keuros)
+        df["icalps_netamount_k__"]   = df["icalps_netamount_k__"].apply(to_keuros)
 
-        # cc_net_weighted derives from already-converted (k€) cc_net.
-        df["cc_net_weighted"] = df["cc_net"] * df["icalps_oppocertainty"] / 100.0
+        # icalps_netweighted_amount__k__ derives from already-converted (k€) icalps_netamount_k__.
+        df["icalps_netweighted_amount__k__"] = df["icalps_netamount_k__"] * df["icalps_oppocertainty"] / 100.0
 
         # Phone normalisation (E.164) — same logic as stg_company_normalised
         if "icalps_companyphone" in df.columns:

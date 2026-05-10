@@ -100,9 +100,9 @@ sources:
             description: "Cost (k€), currency-symbol stripped"
           - name: cc_weighted
             description: "forecast × certainty / 100"
-          - name: cc_net
+          - name: icalps_netamount_k__
             description: "forecast − cost"
-          - name: cc_net_weighted
+          - name: icalps_netweighted_amount__k__
             description: "(forecast − cost) × certainty / 100"
           - name: hubspot_dealstage_name
             description: "HubSpot stage name pre-computed at Bronze extraction"
