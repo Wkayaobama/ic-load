@@ -418,7 +418,10 @@ class SilverNormaliser:
                         NULLIF(Address_Country,'')
                     ), 500
                 )                                             AS icalps_companyaddress,
-                Address_City                                  AS icalps_addresscity,
+                CASE NULLIF(TRIM(Address_City), '')
+                    WHEN NULL THEN NULL
+                    ELSE UPPER(LEFT(TRIM(Address_City), 1)) || LOWER(SUBSTRING(TRIM(Address_City), 2))
+                END                                           AS icalps_addresscity,
                 Address_State                                 AS icalps_address_state,
                 Address_PostCode                              AS icalps_address_postcode,
                 {icalps_country_expr}                         AS icalps_address_country,
@@ -604,7 +607,7 @@ class SilverNormaliser:
                 -- Address
                 {_col_or_null("Address_Street1", "icalps_street_address")},
                 {"LEFT(CONCAT_WS(', ', NULLIF(Address_Street1,''), NULLIF(Address_City,''), NULLIF(Address_PostCode,''), NULLIF(Address_Country,'')), 500) AS icalps_full_address" if "Address_Street1" in contact_cols else "NULL AS icalps_full_address"},
-                {_col_or_null("Address_City", "icalps_addresscity")},
+                {"CASE NULLIF(TRIM(Address_City), '') WHEN NULL THEN NULL ELSE UPPER(LEFT(TRIM(Address_City), 1)) || LOWER(SUBSTRING(TRIM(Address_City), 2)) END AS icalps_addresscity" if "Address_City" in contact_cols else "NULL AS icalps_addresscity"},
                 {_col_or_null("Address_State")},
                 {_col_or_null("Address_PostCode")},
                 {country_sql}                                 AS icalps_address_country,
