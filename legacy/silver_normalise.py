@@ -417,7 +417,7 @@ class SilverNormaliser:
                         NULLIF(Address_PostCode,''),
                         NULLIF(Address_Country,'')
                     ), 500
-                )                                             AS icalps_companyaddress,
+                )                                             AS icalps_full_address,
                 CASE NULLIF(TRIM(Address_City), '')
                     WHEN NULL THEN NULL
                     ELSE UPPER(LEFT(TRIM(Address_City), 1)) || LOWER(SUBSTRING(TRIM(Address_City), 2))

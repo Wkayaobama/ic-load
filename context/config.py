@@ -223,7 +223,7 @@ def load_entity_translation_contract() -> dict[str, Any]:
                     "icalps_comp_language": "icalps_comp_language",
                     "icalps_comp_numemployees": "icalps_comp_numemployees",
                     "icalps_industry_drill_down": "icalps_industry_drill_down",
-                    "icalps_companyaddress": "icalps_companyaddress",
+                    "icalps_full_address": "icalps_full_address",
                     "icalps_street_address": "icalps_street_address",
                     "icalps_addresscity": "city",
                     "icalps_address_state": "icalps_address_state",
