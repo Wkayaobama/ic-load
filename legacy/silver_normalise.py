@@ -598,7 +598,6 @@ class SilverNormaliser:
 
                 -- Company (denormalised)
                 {_col_or_null("Company_Name")},
-                {_col_or_null("Company_WebSite")},
                 {_col_or_null("Company_Type")},
 
                 -- Email: validate format
@@ -610,7 +609,6 @@ class SilverNormaliser:
                 {"CASE NULLIF(TRIM(Address_City), '') WHEN NULL THEN NULL ELSE UPPER(LEFT(TRIM(Address_City), 1)) || LOWER(SUBSTRING(TRIM(Address_City), 2)) END AS icalps_addresscity" if "Address_City" in contact_cols else "NULL AS icalps_addresscity"},
                 {_col_or_null("Address_State")},
                 {_col_or_null("Address_PostCode")},
-                {country_sql}                                 AS icalps_address_country,
                 {full_country_sql}                            AS icalps_full_country,
 
                 -- LinkedIn
@@ -630,9 +628,6 @@ class SilverNormaliser:
         """)
 
         df = self.con.execute("SELECT * FROM stg_contact_normalised_base").df()
-        df["Company_WebSite"]       = df["Company_WebSite"].str.strip()
-        df["Company_WebSite"]       = df["Company_WebSite"].str.replace(r'^http://\s+', '', regex=True)
-        df["Company_WebSite"]       = df["Company_WebSite"].str.replace(r'^ttps://', 'https://', regex=True)
         df["icalps_email"]          = df["icalps_email"].str.strip()
         df["icalps_linkedin_url"]   = df["icalps_linkedin_url"].str.strip()
         df["icalps_owner_email"]    = df["icalps_owner_email"].str.strip().replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
