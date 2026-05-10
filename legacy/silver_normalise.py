@@ -708,8 +708,8 @@ class SilverNormaliser:
         ) if "Company_Language" in opp_cols else "NULL AS company_language"
         company_phone_sql      = _col_or_null("Company_Phone", "icalps_companyphone")
         person_email_sql       = _col_or_null("Person_Email", "person_email")
-        user_fullname_sql      = _col_or_null("User_FullName", "user_fullname")
-        user_email_sql         = _col_or_null("User_Email", "user_email")
+        user_fullname_sql      = _col_or_null("User_FullName", "icalps_owner_fullname")
+        user_email_sql         = _col_or_null("User_Email", "icalps_owner_email")
 
         self.con.execute(f"""
             CREATE OR REPLACE VIEW stg_opportunity_normalised_base AS
@@ -844,7 +844,7 @@ class SilverNormaliser:
             df["icalps_companyphone"] = df["icalps_companyphone"].apply(_normalise_phone)
 
         _drop = {
-            'company_language', 'oppo_createddate', 'oppo_updateddate', 'user_fullname',
+            'company_language', 'oppo_createddate', 'oppo_updateddate',
             'icalps_primaryoppocontact', 'oppo_category', 'icalps_effectiveclosedate', 'person_email',
         }
         df = df[[c for c in df.columns if c.lower() not in _drop]]
