@@ -28,6 +28,33 @@ from pipeline.state import (
 )
 
 
+# Per-entity dbt --select expressions.
+#
+# Two pipelines in this repo invoke dbt and they keep their dbt subprocesses
+# scoped so neither contaminates the other:
+#   • this salvage runner — owns the communication entity only
+#   • pipeline.library_runner — owns library files (`--select +fct_library_files`)
+#
+# Inside the salvage runner, only `communication` is mapped to a selector;
+# company/contact/opportunity/case do not have dbt models (their pipelines
+# go silver → gold entirely in Python) and would either no-op or, worse,
+# cascade into the comm subgraph through shared `stg_hubspot_*` views. A
+# None mapping makes DBT_BUILD a clean SKIPPED transition for those.
+DBT_SELECT_BY_ENTITY: dict[str, str | None] = {
+    "company":     None,
+    "contact":     None,
+    "opportunity": None,
+    "case":        None,
+    "communication": (
+        "+fct_communication_calls +fct_communication_meetings "
+        "+fct_communication_notes +fct_communication_tasks "
+        "+fct_communication_email_meetings "
+        "+fct_communication_bridge +fct_communication_rank "
+        "+fct_custom_object_tasks"
+    ),
+}
+
+
 @dataclass
 class PipelineHooks:
     """Inject the live or probe implementations behind each stage boundary."""
@@ -48,13 +75,20 @@ class PipelineHooks:
 
 
 def _default_dbt_runner(entity: str, dry_run: bool) -> bool:
-    del entity
+    """Per-entity dbt build. Mirrors the library_runner pattern.
+
+    Looks up the --select expression for the entity in DBT_SELECT_BY_ENTITY
+    and shells out to `dbt build --select <expr> --no-version-check`. An
+    entity registered as None (e.g. `case`) is treated as success — there
+    are no dbt models for that entity yet, so DBT_BUILD is a no-op.
+    """
     if dry_run:
         return True
-    command = dbt_command()
-    if command is None:
-        raise RuntimeError("dbt boundary is not configured. Set ICALPS_DBT_COMMAND or inject a dbt hook.")
-    completed = subprocess.run(command, cwd=DBT_PROJECT_DIR, check=False)
+    select_expr = DBT_SELECT_BY_ENTITY.get(entity)
+    if select_expr is None:
+        return True
+    cmd = ["dbt", "build", "--select", select_expr, "--no-version-check"]
+    completed = subprocess.run(cmd, cwd=DBT_PROJECT_DIR, check=False)
     return completed.returncode == 0
 
 
@@ -391,26 +425,36 @@ def _run_silver_validate(ctx: PipelineContext, owner_blocking: bool, verbosity: 
         transition(ctx, PipelineStage.SILVER_VALIDATE, StageStatus.SUCCESS)
 
 
-def _run_pg_functions_install(ctx: PipelineContext, dry_run: bool, hooks: PipelineHooks) -> None:
-    """PG_FUNCTIONS_INSTALL — install all pg functions from MANIFEST.yaml.
+def _run_dbt(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
+    """DBT_BUILD stage — entity-scoped dbt build via --select.
 
-    Contract A (§7.6): runs as a stage of EVERY runner invocation, not
-    only at the orchestrator level. Idempotent — CREATE OR REPLACE.
+    Mirrors the library_runner pattern: each runner narrows its dbt
+    subprocess to only the subgraph the current entity owns. Entities
+    without a registered selector (company/contact/opportunity/case here)
+    transition to SKIPPED so DBT_BUILD never blocks a non-dbt entity.
     """
-    if not _should_run(ctx, PipelineStage.PG_FUNCTIONS_INSTALL, None):
+    if not _should_run(ctx, PipelineStage.DBT_BUILD, None):
         return
-    # Skip in dry_run or preview mode: dbt already ran in 07_dbt.ps1
     if dry_run or ctx.metadata.get("preview"):
         skip_reason = "dry_run" if dry_run else "preview"
         transition(ctx, PipelineStage.DBT_BUILD, StageStatus.SKIPPED, reason=skip_reason)
         return
-    result = hooks.pg_functions_installer(False)
+    select_expr = DBT_SELECT_BY_ENTITY.get(entity)
+    if select_expr is None:
+        transition(
+            ctx,
+            PipelineStage.DBT_BUILD,
+            StageStatus.SKIPPED,
+            reason="no_dbt_models_for_entity",
+            entity=entity,
+        )
+        return
+    succeeded = hooks.dbt_runner(entity, dry_run)
     transition(
         ctx,
-        PipelineStage.PG_FUNCTIONS_INSTALL,
-        StageStatus.SUCCESS,
-        installed=len(result.get("installed", [])),
-        duration_s=result.get("duration_s"),
+        PipelineStage.DBT_BUILD,
+        StageStatus.SUCCESS if succeeded else StageStatus.FAILED,
+        select=select_expr,
     )
 
 
@@ -452,61 +496,6 @@ def _run_entity_postprocess(
     )
 
 
-def _run_dedupe_guard(
-    ctx: PipelineContext,
-    entity: str,
-    dry_run: bool,
-    probe_mode: bool,
-    hooks: PipelineHooks,
-) -> None:
-    if not _should_run(ctx, PipelineStage.DEDUPE_GUARD, None):
-        return
-
-    result = hooks.dedupe_guarder(entity, dry_run)
-    ctx.metadata["dedupe_guard"] = result
-
-    block_count = int(result.get("block_count", 0))
-    review_count = int(result.get("review_count", 0))
-    not_applicable = result.get("mode") == "not_applicable"
-
-    if not_applicable:
-        transition(ctx, PipelineStage.DEDUPE_GUARD, StageStatus.SKIPPED, reason="not_applicable", entity=entity)
-        return
-
-    if block_count > 0:
-        transition(
-            ctx,
-            PipelineStage.DEDUPE_GUARD,
-            StageStatus.FAILED,
-            block_count=block_count,
-            review_count=review_count,
-            artifact=result.get("artifact_json"),
-        )
-
-    if review_count > 0:
-        status = StageStatus.WARNING if dry_run or probe_mode else StageStatus.FAILED
-        transition(
-            ctx,
-            PipelineStage.DEDUPE_GUARD,
-            status,
-            block_count=block_count,
-            review_count=review_count,
-            safe_count=result.get("safe_count", 0),
-            artifact=result.get("artifact_json"),
-        )
-        return
-
-    transition(
-        ctx,
-        PipelineStage.DEDUPE_GUARD,
-        StageStatus.SUCCESS,
-        block_count=block_count,
-        review_count=review_count,
-        safe_count=result.get("safe_count", 0),
-        artifact=result.get("artifact_json"),
-    )
-
-
 def _run_post_run_verify(ctx: PipelineContext, entity: str, dry_run: bool, hooks: PipelineHooks) -> None:
     """POST_RUN_VERIFY — reconciliation coverage + association coverage report.
 
@@ -540,120 +529,6 @@ def _run_post_run_verify(ctx: PipelineContext, entity: str, dry_run: bool, hooks
         warnings_count=len(warnings_list),
         min_reconciliation=min_reconciliation,
         min_association=min_association,
-    )
-
-
-def _run_gold_validate(
-    ctx: PipelineContext,
-    entity: str,
-    dry_run: bool,
-    approve_gold: bool,
-) -> None:
-    """GOLD_VALIDATE — two-gate check before any hubspot.* write.
-
-    Gate 1: --approve-gold flag. The operator must explicitly confirm they've
-    reviewed the silver artifacts. Without this flag, the pipeline stops here
-    with a clear FAILED reason. This prevents accidental live writes.
-
-    Gate 2: pre-gold duplicate reconciliation key check. Reads the same
-    silver_table + match_column that render_entity_upsert will use for
-    ON CONFLICT. If duplicates exist, the upsert would silently overwrite
-    earlier rows — data loss. Better to FAIL here and force upstream dedupe.
-
-    The query is built from schema_context.yaml — same contract as the
-    gold upsert template. If schema_context is unavailable (e.g. entity
-    not in the config), gate 2 is skipped with a WARNING (gate 1 still
-    enforced).
-    """
-    if not _should_run(ctx, PipelineStage.GOLD_VALIDATE, None):
-        return
-    if dry_run:
-        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="dry_run")
-        return
-    if ctx.metadata.get("probe_mode"):
-        transition(ctx, PipelineStage.GOLD_VALIDATE, StageStatus.SKIPPED, reason="probe_mode")
-        return
-
-    # Gate 1: explicit operator approval
-    if not approve_gold:
-        transition(
-            ctx,
-            PipelineStage.GOLD_VALIDATE,
-            StageStatus.FAILED,
-            reason="explicit_gold_validation_required",
-            hint="Pass --approve-gold to confirm you have reviewed silver artifacts before gold upsert.",
-        )
-        # transition(FAILED) raises RuntimeError — execution stops here.
-
-    # Gate 2: pre-gold duplicate check on the ON CONFLICT column.
-    # Uses schema_context.yaml to find the exact silver_table + match_column
-    # that the upsert template will use — same source of truth, no drift.
-    entity_key_map = {
-        "company": "Company",
-        "contact": "Person",
-        "opportunity": "Opportunity",
-    }
-    schema_entity = entity_key_map.get(entity.lower())
-    if schema_entity:
-        try:
-            schema = load_schema_context()
-            cfg = schema.get("entities", {}).get(schema_entity, {})
-            upsert_cfg = cfg.get("upsert", {})
-            silver_table = cfg.get("silver_table")
-            match_column = upsert_cfg.get("match_column")
-
-            if silver_table and match_column:
-                from context.db import get_connection
-
-                check_sql = (
-                    f"SELECT {match_column}, COUNT(*) AS cnt "
-                    f"FROM {silver_table} "
-                    f"GROUP BY {match_column} "
-                    f"HAVING COUNT(*) > 1 "
-                    f"LIMIT 10"
-                )
-                with get_connection() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(check_sql)
-                        dupes = cur.fetchall()
-
-                if dupes:
-                    dupe_ids = [str(row[0]) for row in dupes[:5]]
-                    transition(
-                        ctx,
-                        PipelineStage.GOLD_VALIDATE,
-                        StageStatus.FAILED,
-                        reason="duplicate_reconciliation_keys_in_silver",
-                        silver_table=silver_table,
-                        match_column=match_column,
-                        sample_duplicate_ids=dupe_ids,
-                        total_duplicate_groups=len(dupes),
-                        hint=f"Fix duplicates in {silver_table}.{match_column} before gold upsert. "
-                             f"Run: SELECT {match_column}, COUNT(*) FROM {silver_table} GROUP BY {match_column} HAVING COUNT(*) > 1",
-                    )
-                    # FAILED raises — never reaches here.
-        except FileNotFoundError:
-            # schema_context YAML missing — skip gate 2, gate 1 was enough
-            pass
-        except Exception as exc:
-            # DB error during check — warn but don't block (gate 1 passed).
-            transition(
-                ctx,
-                PipelineStage.GOLD_VALIDATE,
-                StageStatus.WARNING,
-                reason="pre_gold_check_error",
-                error=str(exc)[:256],
-                note="Duplicate check failed but --approve-gold was set. Proceeding with caution.",
-            )
-            return
-
-    transition(
-        ctx,
-        PipelineStage.GOLD_VALIDATE,
-        StageStatus.SUCCESS,
-        reason="gold_validation_passed",
-        approve_gold=True,
-        duplicate_check="passed" if schema_entity else "skipped_no_schema_entity",
     )
 
 

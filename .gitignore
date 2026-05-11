@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.icalps.example
 .venv/
 __pycache__/
 *.egg-info/
@@ -12,6 +13,7 @@ rendered_sql/
 *.log
 *.parquet
 bronze_layer/
+sql/library/*.csv
 gold_layer/
 memory/
 benchmark/

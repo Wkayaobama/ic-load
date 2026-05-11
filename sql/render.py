@@ -1,3 +1,4 @@
+
 """SQL rendering — the single source of truth for what the runner executes.
 
 Shape

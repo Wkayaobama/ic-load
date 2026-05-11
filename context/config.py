@@ -6,6 +6,18 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import find_dotenv, load_dotenv
+
+# Two-stage env load so every salvage-runner entry point (and anything that
+# imports `context.config`) picks up the canonical `.env.icalps` at the
+# Codebase root without each caller having to remember to load it. Mirrors
+# the pattern in `pipeline/library_files/config.py:Settings.from_env`.
+# Precedence: process env > worktree-local `.env` > `.env.icalps`.
+# find_dotenv walks up from cwd, so this works from any subdirectory inside
+# any worktree. Module-level side effect is intentional — context.config is
+# imported by `pipeline.runner` before any os.getenv call hits ICALPS_*.
+load_dotenv(find_dotenv(filename=".env.icalps", usecwd=True))
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
 # Keep all core paths repo-relative so Windows, Codespaces, and optional WSL
 # checkouts all resolve the same runtime layout without changing code.
