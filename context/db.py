@@ -38,10 +38,18 @@ def _parse_jdbc_url(jdbc_url: str) -> dict[str, Any]:
 
 def postgres_config() -> dict[str, Any]:
     # Resolution order:
-    #   1. ICALPS_JDBC_URL (or DATABASE_URL) — single JDBC connection string
+    #   1. ICALPS_JDBC_URL / DATABASE_URL / PROD_POSTGRES_DSN — single
+    #      JDBC connection string. PROD_POSTGRES_DSN is the canonical name
+    #      in .env.icalps and is also consumed by pipeline.library_files /
+    #      pipeline.cleanup; recognising it here keeps every runner reading
+    #      the same secret from the same file.
     #   2. ICALPS_PG* individual vars
     #   3. PG* standard vars
-    jdbc = os.getenv("ICALPS_JDBC_URL") or os.getenv("DATABASE_URL")
+    jdbc = (
+        os.getenv("ICALPS_JDBC_URL")
+        or os.getenv("DATABASE_URL")
+        or os.getenv("PROD_POSTGRES_DSN")
+    )
     if jdbc:
         return _parse_jdbc_url(jdbc)
 
