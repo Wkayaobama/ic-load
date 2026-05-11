@@ -29,6 +29,10 @@ from .walker import build_rows
 # REST writes. Default is DRY-RUN: enumerate + resolve, no POST.
 APPROVE_FILES_UPLOAD_ENV = "ICALPS_APPROVE_FILES_UPLOAD"
 APPROVE_FILE_NOTES_POST_ENV = "ICALPS_APPROVE_FILE_NOTES_POST"
+# Rollback gate — protects the `unmigrate` subcommand. Set to "1" to actually
+# delete previously-attached notes from HubSpot. Default unset = DRY-RUN that
+# only enumerates what *would* be deleted.
+APPROVE_UNMIGRATE_ENV = "ICALPS_APPROVE_UNMIGRATE"
 
 
 def _read_approval_gates() -> tuple[bool, bool]:
@@ -157,6 +161,73 @@ def cmd_walk(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_unmigrate(args: argparse.Namespace) -> int:
+    """Rollback subcommand — delete previously-attached library file notes.
+
+    Uses the ledger as the rollback index: SELECTs every row in
+    `staging.fct_file_notes_posted` with status='attached', then calls
+    `client.delete_note(hs_note_id)` per row. On success the ledger row is
+    flipped to 'unattached_via_unmigrate', so a second invocation is a no-op
+    (same idempotency property as forward migrate).
+
+    Default is DRY-RUN: enumerate what would be deleted, no API calls,
+    no ledger writes. Set ICALPS_APPROVE_UNMIGRATE=1 to perform live DELETEs.
+    """
+    del args  # no per-command args yet
+    settings = Settings.from_env()
+    if not settings.prod_postgres_dsn:
+        print("PROD_POSTGRES_DSN not set", file=sys.stderr)
+        return 2
+
+    ledger = PostgresLedger(settings.prod_postgres_dsn)
+    ledger.bootstrap()
+    client = HubSpotClient.from_settings(settings)
+
+    live = os.environ.get(APPROVE_UNMIGRATE_ENV, "").strip() == "1"
+    print(
+        f"library_files runner — unmigrate gate: "
+        f"{'LIVE' if live else 'DRY'} "
+        f"({APPROVE_UNMIGRATE_ENV}={'1' if live else 'unset'})",
+        file=sys.stderr,
+    )
+
+    rows = ledger.load_attached_rows()
+    if not rows:
+        print("no attached rows in ledger — nothing to unmigrate", file=sys.stderr)
+        json.dump([], sys.stdout, indent=2)
+        print()
+        return 0
+
+    results: list[dict] = []
+    for entry in rows:
+        legacy_id = entry["legacy_library_id"]
+        hs_note_id = entry["hs_note_id"]
+        if not live:
+            results.append({
+                "legacy_id": legacy_id,
+                "hs_note_id": hs_note_id,
+                "status": "would_unattach",
+                "error": None,
+            })
+            continue
+        try:
+            client.delete_note(hs_note_id)
+            status, error = "unattached_via_unmigrate", None
+        except Exception as exc:
+            status, error = "unattach_failed", str(exc)
+        ledger.record_unattach(legacy_id, status, error)
+        results.append({
+            "legacy_id": legacy_id,
+            "hs_note_id": hs_note_id,
+            "status": status,
+            "error": error,
+        })
+
+    json.dump(results, sys.stdout, indent=2)
+    print()
+    return 1 if any(r["status"] == "unattach_failed" for r in results) else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline.library_files.runner")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -178,6 +249,14 @@ def main(argv: list[str] | None = None) -> int:
     migrate.add_argument("--csv-path")
     migrate.add_argument("--query", help="Override SQL for postgres source.")
     migrate.set_defaults(func=cmd_migrate)
+
+    unmigrate = sub.add_parser(
+        "unmigrate",
+        help="Delete previously-attached library file notes from HubSpot, "
+        "using the ledger as the rollback index. "
+        "Gated by ICALPS_APPROVE_UNMIGRATE (default DRY-RUN).",
+    )
+    unmigrate.set_defaults(func=cmd_unmigrate)
 
     args = parser.parse_args(argv)
     return args.func(args)

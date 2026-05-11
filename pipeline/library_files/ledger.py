@@ -30,6 +30,9 @@ class LedgerLike(Protocol):
     def load_existing(self, legacy_ids: Iterable[str]) -> dict[str, dict]: ...
     def record_upload(self, entry: Mapping[str, object]) -> None: ...
     def record_attach(self, entry: Mapping[str, object]) -> None: ...
+    # Rollback surface — consumed by the `unmigrate` runner subcommand.
+    def load_attached_rows(self) -> list[dict]: ...
+    def record_unattach(self, legacy_id: str, status: str, error: str | None) -> None: ...
 
 
 class PostgresLedger:
@@ -150,6 +153,48 @@ class PostgresLedger:
                     entry["status"],
                     entry.get("error"),
                 ),
+            )
+            conn.commit()
+
+    # -- Rollback paths (used by `unmigrate`) -------------------------------
+
+    def load_attached_rows(self) -> list[dict]:
+        """Return rows in fct_file_notes_posted with status='attached'.
+
+        Used by `runner unmigrate` as the rollback index — every row here
+        had a successful Phase 2 (note + association) and can be safely
+        archived via the HubSpot DELETE /notes/{id} endpoint.
+        """
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT legacy_library_id, hs_note_id, idempotency_key, status "
+                f"FROM {self.schema}.fct_file_notes_posted "
+                f"WHERE status = 'attached'"
+            )
+            return [
+                {
+                    "legacy_library_id": row[0],
+                    "hs_note_id": row[1],
+                    "idempotency_key": row[2],
+                    "status": row[3],
+                }
+                for row in cur.fetchall()
+            ]
+
+    def record_unattach(self, legacy_id: str, status: str, error: str | None) -> None:
+        """Flip status on a previously-attached row after an unmigrate attempt.
+
+        Increments `attempts` so retried unmigrates are visible in the ledger.
+        Successful path uses status='unattached_via_unmigrate'; a failed
+        DELETE leaves status='unattach_failed' for the operator to inspect.
+        """
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {self.schema}.fct_file_notes_posted "
+                f"SET status = %s, error = %s, last_attempt_at = now(), "
+                f"    attempts = attempts + 1 "
+                f"WHERE legacy_library_id = %s",
+                (status, error, legacy_id),
             )
             conn.commit()
 
