@@ -55,17 +55,19 @@ Required keys:
 
 One-line smoke test per runner. Each prints `True` / non-empty values if the dotenv chain works.
 
+**Quoting note for PowerShell** — wrap each `-c` snippet in **single quotes** (PowerShell-side) so PowerShell does not try to interpolate `$variable` tokens or apply escape rules. Inside, use **double quotes** for Python strings. Works identically in Windows PowerShell 5.1 and PowerShell 7+.
+
 ```powershell
 # A. Salvage runner — context.config triggers the dotenv walk-up on import
-uv run python -c "import context.config; from context.db import is_postgres_configured; print('salvage_db_configured:', is_postgres_configured())"
+uv run python -c 'import context.config; from context.db import is_postgres_configured; print("salvage_db_configured:", is_postgres_configured())'
 # Expect: salvage_db_configured: True
 
 # B. Library files runner — Settings.from_env() does its own walk-up
-uv run python -c "from pipeline.library_files.config import Settings; s = Settings.from_env(); print('lib_token_len:', len(s.hubspot_token), 'dsn_len:', len(s.prod_postgres_dsn))"
+uv run python -c 'from pipeline.library_files.config import Settings; s = Settings.from_env(); print("lib_token_len:", len(s.hubspot_token), "dsn_len:", len(s.prod_postgres_dsn))'
 # Expect: lib_token_len: 44 (or similar) dsn_len: ~130
 
 # C. Cleanup runner — re-uses library_files.config.Settings, with prod token
-uv run python -c "from pipeline.library_files.config import Settings; s = Settings.from_env(token_var='HUBSPOT_PROD_TOKEN'); print('cleanup_prod_token_len:', len(s.hubspot_token))"
+uv run python -c 'from pipeline.library_files.config import Settings; s = Settings.from_env(token_var="HUBSPOT_PROD_TOKEN"); print("cleanup_prod_token_len:", len(s.hubspot_token))'
 # Expect: cleanup_prod_token_len: 44
 ```
 
@@ -84,21 +86,32 @@ cd C:\Users\ayaobama\Documents\AnthonySalesOps\Codebase\ic-load-library-prod
 # (or wherever you have main checked out)
 
 # Step 2.1 — bootstrap silver + fct view (one-time per fresh DB)
-uv run python -c @"
+#
+# Uses a PowerShell SINGLE-quoted here-string (@'...'@) — purely literal,
+# no $-interpolation, no backtick escapes. The closing '@ MUST be at
+# column 0 (no leading whitespace) — IDEs that auto-indent will silently
+# break it.
+@'
 from pipeline.library_files.silver_library import LibrarySilverNormaliser
 from pipeline.library_files.config import Settings
 from pathlib import Path
 
 settings = Settings.from_env()
 n = LibrarySilverNormaliser(
-    Path('sql/library/files_icalps.csv'),
+    Path("sql/library/files_icalps.csv"),
     dsn=settings.prod_postgres_dsn,
 )
 stats = n.normalise()
 n.install_fct_view()
-print('silver:', stats)
-"@
+print("silver:", stats)
+'@ | uv run python -
 # Expect: written_rows≈5622, view installed without DDL errors
+#
+# If the heredoc still flakes, the bulletproof fallback is to drop the
+# snippet into a .py file and run it instead:
+#   Set-Content scripts/ops/_bootstrap_silver.py @'<same body>'@
+#   uv run python scripts/ops/_bootstrap_silver.py
+# (the file is intentionally not committed — it's a one-shot per fresh DB)
 ```
 
 ```powershell
@@ -331,6 +344,51 @@ Each phase has its own gate; gates do not transfer. Confirm phase-by-phase per t
 | Library migrate skips every row with "no rows resolved against override map" | `overrides.json` doesn't have the legacy ID — populate it, or use `--source postgres` |
 | Unmigrate dry-run reports 0 rows but you know notes exist | The ledger row's `status` isn't `attached` — check the ledger directly |
 | `cleanup.runner archive` fails on `check-overlap` | A row in the cleanup manifest is ALSO in `staging.fct_file_notes_posted` with `status='attached'` — exclude it from the cleanup source view |
+| `uv run python -c "..."` mangles output or fails with strange tokens | PowerShell is interpolating something inside the double-quoted string — switch the outer quotes to single quotes: `-c '...'`. Inside, use double quotes for Python strings. See the "PowerShell quoting" appendix below. |
+| `uv run python -c @"..."@` heredoc fails or runs only partial | Either (a) the closing `"@` has leading whitespace — must be at column 0, OR (b) PowerShell interpolated a `$something` inside. Use the **single-quoted** heredoc `@'...'@ \| uv run python -` shape from Step 2.1 instead. |
+
+---
+
+## Appendix — PowerShell quoting for `uv run python -c`
+
+Three patterns, ordered by robustness:
+
+**1. Single-line snippet — outer single quote, inner double quotes**
+
+```powershell
+uv run python -c 'import os; print("HOME=", os.environ.get("HOME"))'
+```
+
+PowerShell single quotes are purely literal: no `$variable` interpolation, no backtick escapes. Python is happy with single-quoted top-level argument since its own string literals can use double quotes. Works identically in Windows PowerShell 5.1 and PowerShell 7+.
+
+**2. Multi-line snippet — single-quoted heredoc piped to stdin**
+
+```powershell
+@'
+import os
+for k in ("HUBSPOT_SANDBOX_TOKEN", "PROD_POSTGRES_DSN"):
+    v = os.environ.get(k)
+    print(k, "=", "SET" if v else "unset")
+'@ | uv run python -
+```
+
+The closing `'@` MUST be at column 0 (no leading whitespace) — that is the only fragility. IDEs that auto-indent the heredoc will silently break it.
+
+**3. If even (2) flakes — drop to a file**
+
+```powershell
+# Write a one-shot script (don't commit)
+$body = @'
+<your python here>
+'@
+Set-Content -Path scripts/ops/_oneshot.py -Value $body -Encoding UTF8
+uv run python scripts/ops/_oneshot.py
+Remove-Item scripts/ops/_oneshot.py
+```
+
+Zero shell-quoting risk. The pipeline scripts themselves (`pipeline/runner.py`, `pipeline/library_files/runner.py`, `pipeline/cleanup/runner.py`) are **never** affected by these issues — they are invoked via `-m pipeline.X`, not via `-c`. The fragility above only applies to ad-hoc diagnostic snippets inside this runbook.
+
+**What NOT to use:** the double-quoted heredoc `@"..."@`. PowerShell interpolates `$variable` references inside, so any Python code containing `$` (templated SQL, jinja, regex backrefs) gets silently mangled.
 
 ---
 
