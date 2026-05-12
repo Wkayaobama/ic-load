@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = Path(os.getenv("PIPELINE_ARTIFACTS_DIR", str(PROJECT_ROOT / "artifacts")))
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
-BRONZE_DIR = PROJECT_ROOT.parent / "bronze_layer"
+BRONZE_DIR = PROJECT_ROOT / "bronze_layer"
 DBT_PROJECT_DIR = PROJECT_ROOT / "dbt"
 VALIDATION_SCHEMA_PATH = PROJECT_ROOT / "ValidationRules" / "icalps_crm_schema.yaml"
 SCHEMA_CONTEXT_PATH = PROJECT_ROOT / "GomplateRepoMix" / "schema_context.yaml"
