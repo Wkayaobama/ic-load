@@ -43,22 +43,51 @@ independent features running on the same infrastructure.
 
 ## Phase A — Bootstrap (one time)
 
-The runner calls `CleanupLedger.bootstrap()` automatically on first command.
-Verify it created the four tables:
+The runner calls `CleanupLedger.bootstrap()` automatically on first ledger
+write. To **also** materialise the four selection views
+(`fct_cleanup_companies`, `fct_cleanup_contacts`, `fct_cleanup_deals`,
+`fct_cleanup_communication`), run the dedicated subcommand:
+
+```powershell
+uv run python -m pipeline.cleanup.runner bootstrap-views
+```
+
+Expect stderr: `bootstrap-views: created/refreshed staging.fct_cleanup_{companies,contacts,deals,communication}`.
+
+Then verify ledger summary:
 
 ```powershell
 uv run python -m pipeline.cleanup.runner status
 ```
 
 Expect a `{}`-shaped JSON with `manifest`, `archives`, `gdpr`, `properties`
-keys (all empty so far). Then:
+keys (all empty so far).
+
+Then confirm tables AND views exist:
 
 ```powershell
-psql "$env:PROD_POSTGRES_DSN" -c "\dt staging.fct_cleanup_*"
+psql "$env:PROD_POSTGRES_DSN" -c "
+SELECT table_name, table_type
+FROM information_schema.tables
+WHERE table_schema = 'staging' AND table_name LIKE 'fct_cleanup_%'
+UNION ALL
+SELECT table_name, 'VIEW'
+FROM information_schema.views
+WHERE table_schema = 'staging' AND table_name LIKE 'fct_cleanup_%'
+ORDER BY table_type, table_name;
+"
 ```
 
-Expect four tables: `fct_cleanup_manifest`, `fct_cleanup_archives`,
-`fct_cleanup_gdpr`, `fct_cleanup_properties`.
+Expect four `BASE TABLE` rows (`fct_cleanup_manifest`, `fct_cleanup_archives`,
+`fct_cleanup_gdpr`, `fct_cleanup_properties`) plus four `VIEW` rows
+(`fct_cleanup_companies`, `fct_cleanup_contacts`, `fct_cleanup_deals`,
+`fct_cleanup_communication`).
+
+**Communication caveat:** the `fct_cleanup_communication` view is
+**selection-only** at this time. `cleanup archive --object communication`
+is not wired — `selection.SUPPORTED_OBJECTS` excludes engagements. You can
+snapshot the manifest from this view for review, but archiving comms
+requires the engagement-dispatch work (separate scope).
 
 ---
 

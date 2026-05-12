@@ -239,6 +239,22 @@ def cmd_delete_properties(args: argparse.Namespace) -> int:
     return 1 if summary["failed"] else 0
 
 
+# -- bootstrap-views --------------------------------------------------------
+
+def cmd_bootstrap_views(args: argparse.Namespace) -> int:
+    settings = _settings_or_die()
+    ledger = CleanupLedger(settings.prod_postgres_dsn)
+    ledger.bootstrap()
+    ledger.bootstrap_views()
+    ledger.bootstrap_communication_view()
+    print(
+        "bootstrap-views: created/refreshed staging.fct_cleanup_"
+        "{companies,contacts,deals,communication}",
+        file=sys.stderr,
+    )
+    return 0
+
+
 # -- status -----------------------------------------------------------------
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -301,6 +317,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p_status = sub.add_parser("status", help="Print ledger summary.")
     p_status.set_defaults(func=cmd_status)
+
+    p_bv = sub.add_parser(
+        "bootstrap-views",
+        help="Create/refresh staging.fct_cleanup_{companies,contacts,deals,communication} views.",
+    )
+    p_bv.set_defaults(func=cmd_bootstrap_views)
 
     args = parser.parse_args(argv)
     return args.func(args)
