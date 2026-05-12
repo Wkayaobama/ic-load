@@ -81,3 +81,39 @@ def test_bootstrap_views_emit_three_column_contract(dsn: str) -> None:
             )
             cols = [r[0] for r in cur.fetchall()]
             assert cols == ["hubspot_id", "legacy_id", "label"], (view, cols)
+
+
+def test_bootstrap_communication_view_creates_view(dsn: str) -> None:
+    ledger = CleanupLedger(dsn)
+    ledger.bootstrap()
+    ledger.bootstrap_communication_view()
+
+    import psycopg2  # type: ignore[import-not-found]
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM information_schema.views
+            WHERE table_schema = 'staging'
+              AND table_name   = 'fct_cleanup_communication'
+            """
+        )
+        assert cur.fetchone() is not None
+
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'staging'
+              AND table_name   = 'fct_cleanup_communication'
+            ORDER BY ordinal_position
+            """
+        )
+        cols = [r[0] for r in cur.fetchall()]
+        assert cols == ["hubspot_id", "legacy_id", "label"]
+
+
+def test_bootstrap_communication_view_is_idempotent(dsn: str) -> None:
+    ledger = CleanupLedger(dsn)
+    ledger.bootstrap()
+    ledger.bootstrap_communication_view()
+    ledger.bootstrap_communication_view()  # must not raise
