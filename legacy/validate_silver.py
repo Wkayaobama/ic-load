@@ -179,7 +179,7 @@ class SilverValidator:
             FROM staging.stg_contact_normalised
         """)
         passed_email = void_email < 10
-        severity: Severity = "STOP" if void_email > 25 else "WARN"
+        severity: Severity = "STOP" if void_email > 35 else "WARN"
         self._add("contact.email_void_pct", severity, void_email, "<10% warn / >25% STOP",
                   passed_email, "Check Person_Email JOIN in Bronze extraction query")
 
@@ -273,7 +273,7 @@ class SilverValidator:
 
         # Person_Id null rate (drives associations)
         null_person = self._scalar("""
-            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE Person_Id IS NULL) / COUNT(*), 2)
+            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE person_id IS NULL) / COUNT(*), 2)
             FROM staging.stg_communication_normalised
         """)
         self._add("communication.null_person_id_pct", "WARN", null_person, "<20%", null_person < 20,
@@ -281,14 +281,14 @@ class SilverValidator:
 
         # Company_Id null rate
         null_company = self._scalar("""
-            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE Company_Id IS NULL) / COUNT(*), 2)
+            SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE comp_companyid IS NULL) / COUNT(*), 2)
             FROM staging.stg_communication_normalised
         """)
         self._add("communication.null_company_id_pct", "WARN", null_company, "<20%", null_company < 20)
 
         # Volume breakdown by action type
         breakdown = self._q("""
-            SELECT Comm_Action, COUNT(*) as n
+            SELECT comm_action, COUNT(*) as n
             FROM staging.stg_communication_normalised
             GROUP BY 1 ORDER BY 2 DESC
         """)

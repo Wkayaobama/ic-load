@@ -4,8 +4,8 @@
 -- Pass-through for unmapped values — covers already-ISO codes (e.g. "FR")
 -- and any country not in the French-origin CRM vocabulary.
 --
--- Called by: stg_company (icalps_country → country_iso),
--- stg_contact (icalps_country → country_iso).
+-- Called by: stg_company (icalps_address_country → icalps_country_full),
+-- stg_contact (icalps_address_country → icalps_country_full).
 -- Idempotent.
 -- See IC_Load_Production_Plan.md §4.1.
 

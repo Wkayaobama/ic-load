@@ -134,7 +134,7 @@ def inspect_staging_contract(sample_limit: int = 5) -> dict[str, Any]:
         ("staging", "stg_company_normalised"): [
             "comp_companyid",
             "comp_name",
-            "comp_website",
+            "icalps_comp_website",
             "icalps_companytype",
             "icalps_companystatus",
             "icalps_full_country",
@@ -173,10 +173,10 @@ def inspect_staging_contract(sample_limit: int = 5) -> dict[str, Any]:
                     cursor,
                     """
                     WITH groups AS (
-                        SELECT comp_website, COUNT(*) AS row_count
+                        SELECT icalps_comp_website, COUNT(*) AS row_count
                         FROM staging.stg_company_normalised
-                        WHERE comp_website IS NOT NULL
-                        GROUP BY comp_website
+                        WHERE icalps_comp_website IS NOT NULL
+                        GROUP BY icalps_comp_website
                         HAVING COUNT(*) > 1
                     )
                     SELECT
@@ -254,13 +254,13 @@ def inspect_staging_contract(sample_limit: int = 5) -> dict[str, Any]:
                 cursor,
                 f"""
                 SELECT
-                    comp_website,
+                    icalps_comp_website,
                     COUNT(*) AS row_count
                 FROM staging.stg_company_normalised
-                WHERE comp_website IS NOT NULL
-                GROUP BY comp_website
+                WHERE icalps_comp_website IS NOT NULL
+                GROUP BY icalps_comp_website
                 HAVING COUNT(*) > 1
-                ORDER BY COUNT(*) DESC, comp_website
+                ORDER BY COUNT(*) DESC, icalps_comp_website
                 LIMIT {int(sample_limit)}
                 """,
             )
