@@ -310,6 +310,121 @@ Each phase has its own gate; gates do not transfer. Confirm phase-by-phase per t
 
 ---
 
+## Quick reference — stage-by-stage `uv run` commands
+
+The salvage runner (`pipeline.runner`) exposes per-stage flags so each layer can be exercised independently. Use these to bisect failures, validate a single layer after a code change, or run staged migrations one phase at a time.
+
+Pipeline stage order (default full run):
+```
+PG_FUNCTIONS_INSTALL → BRONZE_LOAD → BRONZE_METADATA → BRONZE_WATERMARK → BRONZE_EXPORT
+  → SILVER_NORMALISE → SILVER_VALIDATE
+  → DBT_BUILD → DEDUPE_GUARD
+  → GOLD_VALIDATE → GOLD_UPSERT → COMPLETE
+```
+
+ASSOC_VALIDATE sits between SILVER_VALIDATE and DBT_BUILD when invoked via `--assoc-only`.
+
+### Bronze stage (`--bronze-only`)
+
+Runs PG_FUNCTIONS_INSTALL → BRONZE_LOAD → BRONZE_METADATA → BRONZE_WATERMARK → BRONZE_EXPORT, then stops at COMPLETE with `reason=bronze_only_stop`. Reads CSVs from `BRONZE_DIR` (defaults to `./bronze_layer` in-repo), loads into DuckDB, applies watermark, writes to `staging.stg_*` (raw bronze tables).
+
+```powershell
+uv run python -m pipeline.runner --entity company       --bronze-only
+uv run python -m pipeline.runner --entity contact       --bronze-only
+uv run python -m pipeline.runner --entity opportunity   --bronze-only
+uv run python -m pipeline.runner --entity communication --bronze-only
+```
+
+Acceptance gate: `BRONZE_EXPORT(S)` in the stage history, `COMPLETE(S) reason=bronze_only_stop`. Verify rows landed:
+
+```powershell
+psql "$env:PROD_POSTGRES_DSN" -c "SELECT COUNT(*) FROM staging.stg_company"
+psql "$env:PROD_POSTGRES_DSN" -c "SELECT COUNT(*) FROM staging.stg_contact"
+psql "$env:PROD_POSTGRES_DSN" -c "SELECT COUNT(*) FROM staging.stg_opportunity"
+psql "$env:PROD_POSTGRES_DSN" -c "SELECT COUNT(*) FROM staging.stg_communication"
+```
+
+### Silver stage (`--silver-only`)
+
+Runs through SILVER_NORMALISE + SILVER_VALIDATE on top of bronze tables, then stops at COMPLETE with `reason=silver_only_stop`. Produces `staging.stg_*_normalised` via `legacy/silver_normalise.py`, then runs the validator suite from `legacy/validate_silver.py`.
+
+```powershell
+uv run python -m pipeline.runner --entity company       --silver-only
+uv run python -m pipeline.runner --entity contact       --silver-only
+uv run python -m pipeline.runner --entity opportunity   --silver-only
+uv run python -m pipeline.runner --entity communication --silver-only
+```
+
+Acceptance gate: `SILVER_NORMALISE(S)` then `SILVER_VALIDATE(W)` or `(S)` (WARN is acceptable for data-quality findings; STOP is not). Verify:
+
+```powershell
+psql "$env:PROD_POSTGRES_DSN" -c "SELECT COUNT(*) FROM staging.stg_company_normalised"
+psql "$env:PROD_POSTGRES_DSN" -c "SELECT COUNT(*) FROM staging.stg_contact_normalised"
+psql "$env:PROD_POSTGRES_DSN" -c "SELECT COUNT(*) FROM staging.stg_opportunity_normalised"
+psql "$env:PROD_POSTGRES_DSN" -c "SELECT COUNT(*) FROM staging.stg_communication_normalised"
+```
+
+### Associate stage (`--assoc-only`)
+
+Runs ASSOC_VALIDATE only (skips bronze + silver + dbt). Validates that staging-side reconciliation keys (`icalps_company_id`, `icalps_contact_id`, `icalps_deal_id`) match HubSpot-side records. Stops at COMPLETE with `reason=assoc_only_stop`. Communication entity only — the other entities don't need an explicit assoc step.
+
+```powershell
+uv run python -m pipeline.runner --entity communication --assoc-only
+```
+
+Acceptance gate: `ASSOC_VALIDATE(S)` with the match-rate report. WARN is acceptable; FAILED means reconciliation broke and gold should not run.
+
+### Gold stage (default full run + `--approve-gold`)
+
+There is no `--gold-only` flag — gold is the terminal stage of the default run. To exercise gold after silver is green, use the full pipeline without `--bronze-only` / `--silver-only` / `--assoc-only`. Live writes to `hubspot.*` require both `--approve-gold` AND no `--preview`.
+
+```powershell
+# 4.1 Gold dry-render (no writes) — produces SQL only, dumps candidate rows to artifacts/ops/
+uv run python -m pipeline.runner --entity company       --preview
+uv run python -m pipeline.runner --entity contact       --preview
+uv run python -m pipeline.runner --entity opportunity   --preview
+uv run python -m pipeline.runner --entity communication --preview
+
+# 4.2 Live gold upsert (writes to hubspot.* — gated)
+uv run python -m pipeline.runner --entity company       --approve-gold
+uv run python -m pipeline.runner --entity contact       --approve-gold
+uv run python -m pipeline.runner --entity opportunity   --approve-gold
+uv run python -m pipeline.runner --entity communication --approve-gold
+```
+
+Acceptance gate (preview): `GOLD_UPSERT(S) mode=preview` and `statements=N` matching expected count. Acceptance gate (live): `GOLD_UPSERT(S)` with `inserted=` / `updated=` counts; the run artifact at `artifacts/pipeline_run_<entity>_*.json` records every column written.
+
+### Probe mode (`--probe-mode`)
+
+Read-only end-to-end including DBT_BUILD. Skips GOLD_VALIDATE and writes nothing to HubSpot. Use this to validate that dbt models still compile against current staging schema. Faster than `--preview` because it skips the SELECT-body candidate-row dump.
+
+```powershell
+uv run python -m pipeline.runner --entity communication --probe-mode
+```
+
+### Pre-flight — dbt availability
+
+DBT_BUILD runs as part of the default pipeline between SILVER_VALIDATE and GOLD_VALIDATE. Confirm the dbt extra is installed before any non-`--silver-only` run:
+
+```powershell
+uv run --extra dbt dbt --version
+# Expect: dbt Core 1.7+ with dbt-duckdb adapter
+```
+
+### Resume from a specific stage (`--resume-from`)
+
+If an earlier run failed mid-pipeline, resume from where it stopped without re-running successful stages:
+
+```powershell
+uv run python -m pipeline.runner --entity company --resume-from SILVER_NORMALISE
+uv run python -m pipeline.runner --entity company --resume-from DBT_BUILD
+uv run python -m pipeline.runner --entity company --resume-from GOLD_UPSERT --approve-gold
+```
+
+Stage names match the labels in the artifact log (`BRONZE_LOAD`, `BRONZE_METADATA`, `BRONZE_WATERMARK`, `BRONZE_EXPORT`, `SILVER_NORMALISE`, `SILVER_VALIDATE`, `DBT_BUILD`, `DEDUPE_GUARD`, `GOLD_VALIDATE`, `GOLD_UPSERT`).
+
+---
+
 ## Quick reference — every gate, every default
 
 | Gate env var | Pipeline | Phase | Default | Irreversible? |
