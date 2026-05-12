@@ -54,8 +54,10 @@ sources:
             description: "Primary street address (Address_Street1, max 255 chars)"
           - name: icalps_full_address
             description: "Concatenated full address (Street1, Street2, City, PostCode, Country, max 500 chars)"
-          - name: icalps_country
-            description: "ISO 3166-1 alpha-2 country code"
+          - name: icalps_address_country
+            description: "Cleaned country value (ISO-2 code where length=2; pass-through otherwise)"
+          - name: icalps_full_country
+            description: "ISO-2 mapped to full country name via fn_map_country_iso"
           - name: icalps_companyphone
             description: "E.164 normalised phone"
           - name: icalps_linkedin_url
@@ -80,8 +82,8 @@ sources:
             description: "HTML-stripped title, truncated at 150 chars"
           - name: icalps_street_address
             description: "Primary street address"
-          - name: icalps_country
-            description: "ISO 3166-1 alpha-2 country code"
+          - name: icalps_full_country
+            description: "ISO-2 mapped to full country name via fn_map_country_iso"
           - name: icalps_linkedin_url
             description: "Validated linkedin.com/in/ URL"
 
@@ -100,10 +102,10 @@ sources:
             description: "Cost (k€), currency-symbol stripped"
           - name: cc_weighted
             description: "forecast × certainty / 100"
-          - name: cc_net
-            description: "forecast − cost"
-          - name: cc_net_weighted
-            description: "(forecast − cost) × certainty / 100"
+          - name: icalps_netamount_k__
+            description: "forecast − cost (k€)"
+          - name: icalps_netweighted_amount__k__
+            description: "(forecast − cost) × certainty / 100 (k€)"
           - name: hubspot_dealstage_name
             description: "HubSpot stage name pre-computed at Bronze extraction"
           - name: hubspot_pipeline_id
