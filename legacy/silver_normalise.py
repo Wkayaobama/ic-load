@@ -378,6 +378,7 @@ class SilverNormaliser:
 
         comp_deleted_sql = "Comp_Deleted" if "Comp_Deleted" in company_cols else "NULL"
 
+        has_primary_id    = "Comp_PrimaryPersonId" in company_cols
         has_primary_first = "Comp_PrimaryPersonFirstName" in company_cols
         has_primary_last  = "Comp_PrimaryPersonLastName" in company_cols
         if has_primary_first or has_primary_last:
@@ -416,22 +417,22 @@ class SilverNormaliser:
                         NULLIF(Address_PostCode,''),
                         NULLIF(Address_Country,'')
                     ), 500
-                )                                             AS icalps_companyaddress,
-                Address_City                                  AS icalps_addresscity,
-                Address_State                                 AS icalps_company_state,
+                )                                             AS icalps_full_address,
+                CASE NULLIF(TRIM(Address_City), '')
+                    WHEN NULL THEN NULL
+                    ELSE UPPER(LEFT(TRIM(Address_City), 1)) || LOWER(SUBSTRING(TRIM(Address_City), 2))
+                END                                           AS icalps_addresscity,
+                Address_State                                 AS icalps_address_state,
                 Address_PostCode                              AS icalps_address_postcode,
-                Address_Country                               AS icalps_address_country,
-                CASE WHEN LENGTH({country_sql}) = 2
-                     THEN UPPER({country_sql})
-                     ELSE NULL
-                END                                           AS icalps_country,
+                {icalps_country_expr}                         AS icalps_address_country,
                 {full_country_sql}                            AS icalps_full_country,
 
                 -- Contact info
                 Company_Email                                 AS icalps_companyemail,
                 {company_linkedin_sql}                        AS icalps_linkedin_url,
 
-                -- Primary contact name (first + last concatenated)
+                -- Primary contact
+                {"Comp_PrimaryPersonId" if has_primary_id else "NULL"} AS icalps_primarycontact_id,
                 {primary_contact_sql}                         AS icalps_companyprimarycontact,
 
                 -- Owner raw (resolve to HubSpot owner ID in owner resolution step)
@@ -511,6 +512,9 @@ class SilverNormaliser:
             df["icalps_canonical_domain"] = None
             df["icalps_sibling_index"] = None
 
+        _drop = {'comp_updateddate', 'icalps_company_sector', 'owner_firstname', 'owner_lastname', 'comp_currencyid'}
+        df = df[[c for c in df.columns if c.lower() not in _drop]]
+
         # Convert pandas StringDtype columns to object for DuckDB compatibility
         for col in df.columns:
             if isinstance(df[col].dtype, pd.StringDtype) or df[col].dtype.name in ('str', 'string'):
@@ -579,19 +583,21 @@ class SilverNormaliser:
                 {_col_or_null("Pers_Department", "icalps_department")},
                 {contact_status_sql}                          AS icalps_contactstatus,
                 {company_lang_contact_sql}                    AS icalps_language,
-                {_col_or_null("Pers_Source")},
+                {"Pers_Source AS icalps_pers_source" if "Pers_Source" in contact_cols else "NULL AS icalps_pers_source"},
                 {_col_or_null("Pers_Territory")},
                 {_col_or_null("Pers_WebSite")},
                 {_col_or_null("Pers_CreatedDate")},
                 {_col_or_null("Pers_UpdatedDate")},
                 {_col_or_null("Pers_CreatedBy")},
 
+                -- Marketable flag: Y = opted out (false), NULL = marketable (true)
+                {"CASE WHEN Pers_OptOut = 'Y' THEN FALSE ELSE TRUE END AS pers_marketable" if "Pers_OptOut" in contact_cols else "TRUE AS pers_marketable"},
+
                 -- Soft-delete flag (carried through unchanged)
                 {_col_or_null("Pers_Deleted", "pers_deleted")},
 
                 -- Company (denormalised)
                 {_col_or_null("Company_Name")},
-                {_col_or_null("Company_WebSite")},
                 {_col_or_null("Company_Type")},
 
                 -- Email: validate format
@@ -600,10 +606,9 @@ class SilverNormaliser:
                 -- Address
                 {_col_or_null("Address_Street1", "icalps_street_address")},
                 {"LEFT(CONCAT_WS(', ', NULLIF(Address_Street1,''), NULLIF(Address_City,''), NULLIF(Address_PostCode,''), NULLIF(Address_Country,'')), 500) AS icalps_full_address" if "Address_Street1" in contact_cols else "NULL AS icalps_full_address"},
-                {_col_or_null("Address_City", "icalps_addresscity")},
+                {"CASE NULLIF(TRIM(Address_City), '') WHEN NULL THEN NULL ELSE UPPER(LEFT(TRIM(Address_City), 1)) || LOWER(SUBSTRING(TRIM(Address_City), 2)) END AS icalps_addresscity" if "Address_City" in contact_cols else "NULL AS icalps_addresscity"},
                 {_col_or_null("Address_State")},
                 {_col_or_null("Address_PostCode")},
-                {country_sql}                                 AS icalps_address_country,
                 {full_country_sql}                            AS icalps_full_country,
 
                 -- LinkedIn
@@ -623,9 +628,6 @@ class SilverNormaliser:
         """)
 
         df = self.con.execute("SELECT * FROM stg_contact_normalised_base").df()
-        df["Company_WebSite"]       = df["Company_WebSite"].str.strip()
-        df["Company_WebSite"]       = df["Company_WebSite"].str.replace(r'^http://\s+', '', regex=True)
-        df["Company_WebSite"]       = df["Company_WebSite"].str.replace(r'^ttps://', 'https://', regex=True)
         df["icalps_email"]          = df["icalps_email"].str.strip()
         df["icalps_linkedin_url"]   = df["icalps_linkedin_url"].str.strip()
         df["icalps_owner_email"]    = df["icalps_owner_email"].str.strip().replace(r'^\s*$', pd.NA, regex=True).fillna("thierry.villard@icalps.com")
@@ -640,6 +642,14 @@ class SilverNormaliser:
         """).df()
         df["icalps_businessphone"] = raw["Person_Phone_Business"].apply(_normalise_phone)
         df["icalps_mobilephone"]   = raw["Person_Phone_Mobile"].apply(_normalise_phone)
+
+        _drop = {
+            'icalps_street_address', 'pers_createddate', 'icalps_owner_email', 'pers_createdby',
+            'pers_updateddate', 'company_type', 'pers_deleted', 'icalps_full_address',
+            'icalps_language', 'icalps_department', 'pers_middlename', 'pers_territory',
+            'pers_website', 'pers_suffix', 'pers_gender',
+        }
+        df = df[[c for c in df.columns if c.lower() not in _drop]]
 
         self.con.register("stg_contact_normalised_df", df)
         return _duckdb_to_pg(self.con, "stg_contact_normalised_df", "staging.stg_contact_normalised")
@@ -661,7 +671,7 @@ class SilverNormaliser:
             return f"{col} AS {alias}" if col in opp_cols else f"NULL AS {alias}"
 
         oppo_category_sql      = _col_or_null("Oppo_Category", "oppo_category")
-        oppo_notes_sql         = _col_or_null("Oppo_Note", "icalps_dealnotes")
+        oppo_notes_sql         = ("REGEXP_REPLACE(Oppo_Note, '[\\r\\n]+', ' ', 'g') AS icalps_dealnotes" if "Oppo_Note" in opp_cols else "NULL AS icalps_dealnotes")
         oppo_deleted_sql       = _col_or_null("Oppo_Deleted", "oppo_deleted")
         oppo_opened_date_sql   = "TRY_CAST(Oppo_OpenedDate AS DATE)" if "Oppo_OpenedDate" in opp_cols else "TRY_CAST(Oppo_Opened AS DATE)" if "Oppo_Opened" in opp_cols else "NULL"
         oppo_targetclose_sql   = (
@@ -673,10 +683,21 @@ class SilverNormaliser:
         oppo_actual_close_sql  = _col_or_null("Oppo_ActualClose", "icalps_effectiveclosedate")
         oppo_closed_sql        = _col_or_null("Oppo_Closed", "oppo_closed")
         # HubSpot stage mapping: Bronze has HubSpot_Pipeline_ID and HubSpot_Dealstage_ID
-        # Map these to canonical silver column names (pipeline/dealstage coexist with icalps_stage/icalps_dealstatus)
+        # Map these to canonical silver column names (pipeline/hubspot_stageid coexist with icalps_stage/icalps_dealstatus)
         # Note: explicitly use AS alias since _col_or_null doesn't alias when column exists
         hs_pipeline_sql        = "COALESCE(\"HubSpot_Pipeline_ID\", '766126206') AS pipeline" if "HubSpot_Pipeline_ID" in opp_cols else "'766126206' AS pipeline"
-        hs_dealstage_sql       = "\"HubSpot_Dealstage_ID\" AS dealstage" if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS dealstage"
+        hs_dealstage_sql       = "\"HubSpot_Dealstage_ID\" AS hubspot_stageid" if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS hubspot_stageid"
+        hs_dealstage_name_sql  = (
+            "CASE CAST(\"HubSpot_Dealstage_ID\" AS VARCHAR)"
+            " WHEN '1116419644' THEN 'Identified'"
+            " WHEN '1116419645' THEN 'Qualified'"
+            " WHEN '1116419646' THEN 'Design In'"
+            " WHEN '1116419647' THEN 'Design Win'"
+            " WHEN '1116419649' THEN 'Closed Won'"
+            " WHEN '1116419650' THEN 'Closed Dead'"
+            " WHEN '1313738265' THEN 'Closed Lost'"
+            " END AS hubspot_dealstage_name"
+        ) if "HubSpot_Dealstage_ID" in opp_cols else "NULL AS hubspot_dealstage_name"
         company_language_sql   = (
             "CASE CAST(Company_Language AS VARCHAR)"
             " WHEN '0' THEN 'French'"
@@ -685,8 +706,8 @@ class SilverNormaliser:
         ) if "Company_Language" in opp_cols else "NULL AS company_language"
         company_phone_sql      = _col_or_null("Company_Phone", "icalps_companyphone")
         person_email_sql       = _col_or_null("Person_Email", "person_email")
-        user_fullname_sql      = _col_or_null("User_FullName", "user_fullname")
-        user_email_sql         = _col_or_null("User_Email", "user_email")
+        user_fullname_sql      = _col_or_null("User_FullName", "icalps_owner_fullname")
+        user_email_sql         = _col_or_null("User_Email", "icalps_owner_email")
 
         self.con.execute(f"""
             CREATE OR REPLACE VIEW stg_opportunity_normalised_base AS
@@ -700,7 +721,7 @@ class SilverNormaliser:
                 {oppo_category_sql},
                 Oppo_Stage AS icalps_stage,
                 Oppo_Status AS icalps_dealstatus,
-                Oppo_AssignedUserId AS oppo_assigneduserid,
+                Oppo_AssignedUserId AS icalps_ownerid,
                 {oppo_notes_sql},
                 {oppo_deleted_sql},
                 Oppo_PrimaryCompanyId AS icalps_company_id,
@@ -765,7 +786,7 @@ class SilverNormaliser:
                                 ',', '.'
                             ), ' ', ''
                         )
-                    AS DOUBLE), 0.0)                          AS cc_net,
+                    AS DOUBLE), 0.0)                          AS icalps_netamount_k__,
 
                 -- Deduplication rank (keep latest by UpdatedDate)
                 ROW_NUMBER() OVER (
@@ -775,6 +796,7 @@ class SilverNormaliser:
 
                 -- HubSpot stage mapping (pre-computed at Bronze extraction; NULL if not extracted)
                 {hs_dealstage_sql},
+                {hs_dealstage_name_sql},
                 {hs_pipeline_sql},
 
                 -- Denormalised
@@ -804,20 +826,26 @@ class SilverNormaliser:
         df = self.con.execute("SELECT * FROM stg_opportunity_deduped").df()
         df["person_email"]          = df["person_email"].str.strip()
 
-        # Convert forecast / cost / cc_net from absolute euros to k€.
+        # Convert forecast / cost / icalps_netamount_k__ from absolute euros to k€.
         # to_keuros is linear (k(a-b) == ka - kb), so applying it to all three
         # keeps them unit-consistent. icalps_oppocertainty is a percent and
         # stays unchanged.
-        df["icalps_forecast"] = df["icalps_forecast"].apply(to_keuros)
-        df["ic_alps_cost"]    = df["ic_alps_cost"].apply(to_keuros)
-        df["cc_net"]          = df["cc_net"].apply(to_keuros)
+        df["icalps_forecast"]        = df["icalps_forecast"].apply(to_keuros)
+        df["ic_alps_cost"]           = df["ic_alps_cost"].apply(to_keuros)
+        df["icalps_netamount_k__"]   = df["icalps_netamount_k__"].apply(to_keuros)
 
-        # cc_net_weighted derives from already-converted (k€) cc_net.
-        df["cc_net_weighted"] = df["cc_net"] * df["icalps_oppocertainty"] / 100.0
+        # icalps_netweighted_amount__k__ derives from already-converted (k€) icalps_netamount_k__.
+        df["icalps_netweighted_amount__k__"] = df["icalps_netamount_k__"] * df["icalps_oppocertainty"] / 100.0
 
         # Phone normalisation (E.164) — same logic as stg_company_normalised
         if "icalps_companyphone" in df.columns:
             df["icalps_companyphone"] = df["icalps_companyphone"].apply(_normalise_phone)
+
+        _drop = {
+            'company_language', 'oppo_createddate', 'oppo_updateddate',
+            'icalps_primaryoppocontact', 'oppo_category', 'icalps_effectiveclosedate', 'person_email',
+        }
+        df = df[[c for c in df.columns if c.lower() not in _drop]]
 
         self.con.register("stg_opportunity_normalised_df", df)
         return _duckdb_to_pg(self.con, "stg_opportunity_normalised_df", "staging.stg_opportunity_normalised")
@@ -862,11 +890,10 @@ class SilverNormaliser:
                 -- Soft-delete flag (carried through unchanged)
                 {_c('Comm_Deleted')},
                 -- Denormalised (may be absent from older Bronze extracts)
-                {_c('Person_Email')},
-                {_c('Person_Name')},
-                {_c('Comp_CompanyId')},
-                {_c('Comp_Name')},
-                {_c('Comp_WebSite')},
+                {"Person_EmailAddress AS person_email" if "Person_EmailAddress" in comm_cols else "NULL AS person_email"},
+                {"NULLIF(TRIM(CONCAT_WS(' ', NULLIF(Person_FirstName,''), NULLIF(Person_LastName,''))), '') AS person_name" if ("Person_FirstName" in comm_cols or "Person_LastName" in comm_cols) else "NULL AS person_name"},
+                {"Company_Id AS comp_companyid" if "Company_Id" in comm_cols else "NULL AS comp_companyid"},
+                {"Company_Name AS comp_name" if "Company_Name" in comm_cols else "NULL AS comp_name"},
                 -- Owner email: prefer direct Comm_OwnerEmail, fall back to denormalised Companies join
                 COALESCE(
                     {"Comm_OwnerEmail" if "Comm_OwnerEmail" in comm_cols else "NULL"},
