@@ -281,9 +281,11 @@ def _run_bronze(
     bronze_csv_override: str | None,
 ) -> None:
     # Dry-run/preview contract: touch nothing. Skip all four BRONZE_* stages as a
-    # block so a fresh clone without bronze_layer co-located can still
-    # validate the stage wiring end-to-end without a CSV lookup or DuckDB
-    # load. Preview mode assumes bronze data already loaded by earlier ops stages.
+    # block so a fresh clone without bronze CSVs present (whether in-repo at the
+    # default PROJECT_ROOT/bronze_layer or at the PIPELINE_BRONZE_DIR override
+    # path) can still validate the stage wiring end-to-end without a CSV lookup
+    # or DuckDB load. Preview mode assumes bronze data already loaded by earlier
+    # ops stages.
     if dry_run or ctx.metadata.get("preview"):
         skip_reason = "dry_run" if dry_run else "preview"
         for stage in (
