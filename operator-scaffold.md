@@ -19,6 +19,21 @@ via `find_dotenv(usecwd=True)` walk-up in `Settings.from_env()`. Worktree-local
 `.env` overrides if present. Precedence: process env > worktree `.env` >
 `.env.icalps`.
 
+### Bronze CSV location
+
+The pipeline reads bronze CSVs from `BRONZE_DIR`, defaulting to `bronze_layer/`
+inside the repo (`PROJECT_ROOT / "bronze_layer"`). If your bronze CSVs live
+elsewhere (e.g. a shared mount or a sibling directory like
+`Codebase/ic-load-main/bronze_layer/`), set `PIPELINE_BRONZE_DIR` in
+`.env.icalps` to the absolute path:
+
+```ini
+PIPELINE_BRONZE_DIR=C:\Users\ayaobama\Documents\AnthonySalesOps\Codebase\ic-load-main\bronze_layer
+```
+
+Same env-var-with-default pattern as `PIPELINE_ARTIFACTS_DIR`. The value is
+read once at module import time — restart the runner after editing.
+
 ## Invocation pattern
 
 ```powershell
