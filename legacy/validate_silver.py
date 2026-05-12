@@ -144,13 +144,15 @@ class SilverValidator:
         """)
         self._add("company.city_fill_pct", "INFO", city_fill, ">50%", city_fill > 50)
 
-        # Unmapped country values
+        # Unmapped country values: raw country populated but the canonical
+        # mapped column (icalps_full_country) wasn't filled in by the
+        # normalisation step.
         unmapped_countries = self._q("""
             SELECT icalps_address_country, COUNT(*) as n
             FROM staging.stg_company_normalised
             WHERE icalps_address_country IS NOT NULL
               AND icalps_address_country != ''
-              AND icalps_country IS NULL
+              AND icalps_full_country IS NULL
             GROUP BY 1 ORDER BY 2 DESC LIMIT 20
         """)
         if not unmapped_countries.empty:
