@@ -137,7 +137,7 @@ def inspect_staging_contract(sample_limit: int = 5) -> dict[str, Any]:
             "comp_website",
             "icalps_companytype",
             "icalps_companystatus",
-            "icalps_country",
+            "icalps_full_country",
             "_load_status",
         ],
     }
