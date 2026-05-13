@@ -1,0 +1,68 @@
+object_type,hubspot_id,original_name,target_name,reason
+companies,38065421193,THALES Meudon,THALES Meudon Group,sibling_family_size_39_domain_thalesgroup.com
+companies,35422332544,THALES ALENIA SPACE Toulouse,THALES ALENIA SPACE Toulouse Group,sibling_family_size_39_domain_thalesgroup.com
+companies,38047877235,STMicroelectronics Rennes,STMicroelectronics Rennes Group,sibling_family_size_15_domain_st.com
+companies,38073072157,NOKIA Marcoussis,NOKIA Marcoussis Group,sibling_family_size_13_domain_nokia.com
+companies,38047722124,NXP SEMICONDUCTORS,NXP SEMICONDUCTORS Group,sibling_family_size_12_domain_nxp.com
+companies,37991107450,Onsemi Milano,Onsemi Milano Group,sibling_family_size_12_domain_onsemi.com
+companies,37989561985,ERICSSON Malmö,ERICSSON Malmö Group,sibling_family_size_9_domain_ericsson.com
+companies,37978186009,INFINEON Technologies Neubiberg,INFINEON Technologies Neubiberg Group,sibling_family_size_9_domain_infineon.com
+companies,37974624594,Global Foundries Santa Clara,Global Foundries Santa Clara Group,sibling_family_size_8_domain_gf.com
+companies,37972054351,Microchip technology Munich,Microchip technology Munich Group,sibling_family_size_8_domain_microchip.com
+companies,37975088547,Qualcomm Nijmegen,Qualcomm Nijmegen Group,sibling_family_size_7_domain_qualcomm.com
+companies,10143984523,Renesas Rennes,Renesas Rennes Group,sibling_family_size_7_domain_renesas.com
+companies,37989095060,VALEO Sablé,VALEO Sablé Group,sibling_family_size_7_domain_valeo.com
+companies,38053961908,CEA Bourget,CEA Bourget Group,sibling_family_size_6_domain_cea.fr
+companies,38062141209,SCHNEIDER Electric Gre3,SCHNEIDER Electric Gre3 Group,sibling_family_size_6_domain_schneider-electric.fr
+companies,38064340588,u-blox Leuven,u-blox Leuven Group,sibling_family_size_6_domain_u-blox.com
+companies,37968413966,Osram ams,Osram ams Group,sibling_family_size_5_domain_ams-osram.com
+companies,38044008017,ams-OSRAM AG Stutensee,ams-OSRAM AG Stutensee Group,sibling_family_size_5_domain_ams.com
+companies,38048186526,ARM Courbevoie,ARM Courbevoie Group,sibling_family_size_5_domain_arm.com
+companies,37979270037,Bosch Sensortec GmbH,Bosch Sensortec GmbH Group,sibling_family_size_5_domain_bosch-sensortec.com
+companies,37988476564,Boston Scientific (Singapore),Boston Scientific (Singapore) Group,sibling_family_size_5_domain_bostonscientific.com
+companies,38039370837,DGA Victor,DGA Victor Group,sibling_family_size_5_domain_defense.gouv.fr
+companies,38046790004,Dialog Semiconductor Germering,Dialog Semiconductor Germering Group,sibling_family_size_5_domain_dialog-semiconductor.com
+companies,37975865443,GE Healthcare,GE Healthcare Group,sibling_family_size_5_domain_gehealthcare.fr
+companies,37983004537,Medtronic Berne,Medtronic Berne Group,sibling_family_size_5_domain_medtronic.com
+companies,37973230201,SAAB Group Stockholm,SAAB Group Stockholm Group,sibling_family_size_5_domain_saabgroup.com
+companies,37982694479,Safran Electronics & Defense Valence,Safran Electronics & Defense Valence Group,sibling_family_size_5_domain_safran-electronics-defense.com
+companies,38033689392,Safran Aircraft Engines Moissy,Safran Aircraft Engines Moissy Group,sibling_family_size_5_domain_safran-group.com
+companies,38072917516,Airbus Defence & Space Toulouse,Airbus Defence & Space Toulouse Group,sibling_family_size_4_domain_airbus.com
+companies,37983623831,HAGER Group Crolles,HAGER Group Crolles Group,sibling_family_size_4_domain_hager.fr
+companies,38043853387,Melexis Tessenderlo,Melexis Tessenderlo Group,sibling_family_size_4_domain_melexis.com
+companies,38073072158,ABB Daettwill,ABB Daettwill Group,sibling_family_size_4_domain_new.abb.com
+companies,37983779078,TEXAS INSTRUMENTS Freising,TEXAS INSTRUMENTS Freising Group,sibling_family_size_4_domain_ti.com
+companies,38072917517,VTT Technical Research Centre Teknaiikantie,VTT Technical Research Centre Teknaiikantie Group,sibling_family_size_4_domain_vttresearch.com
+companies,38032145819,Airbus Defence & Space Suresnes,Airbus Defence & Space Suresnes Group,sibling_family_size_3_domain_airbusdefenceandspace.com
+companies,37978031628,ALLEGRO MICROSYSTEMS FRANCE SAS,ALLEGRO MICROSYSTEMS FRANCE SAS Group,sibling_family_size_3_domain_allegromicro.com
+companies,37970657335,ALTEN TECHNOLOGIES,ALTEN TECHNOLOGIES Group,sibling_family_size_3_domain_alten.fr
+companies,38055972649,ATOS Sophia Antipolis,ATOS Sophia Antipolis Group,sibling_family_size_3_domain_atos.net
+companies,37974160735,CATENA Microelectronics Son,CATENA Microelectronics Son Group,sibling_family_size_3_domain_catena.nl
+companies,38033070994,CONTINENTAL Rambouillet,CONTINENTAL Rambouillet Group,sibling_family_size_3_domain_conti-online.com
+companies,37973230199,CSEM Basel,CSEM Basel Group,sibling_family_size_3_domain_csem.ch
+companies,38068111407,Teledyne E2V Paris,Teledyne E2V Paris Group,sibling_family_size_3_domain_e2v.com
+companies,38044008016,ETH Zurich Gloriastrasse,ETH Zurich Gloriastrasse Group,sibling_family_size_3_domain_ethz.ch
+companies,37992499758,FORVIA Nanterre,FORVIA Nanterre Group,sibling_family_size_3_domain_forvia.com
+companies,36779882351,FORVIA Nanterre,FORVIA Nanterre Group,sibling_family_size_3_domain_forvia.com
+companies,37968569103,Fraunhofer IPMS Dresden,Fraunhofer IPMS Dresden Group,sibling_family_size_3_domain_fraunhofer.de
+companies,37974160725,GE Grid Solutions 34,GE Grid Solutions 34 Group,sibling_family_size_3_domain_gegridsolutions.com
+companies,37976792418,FORVIA HELLA Lippstadt,FORVIA HELLA Lippstadt Group,sibling_family_size_3_domain_hella.com
+companies,37991571544,Huawei Issy,Huawei Issy Group,sibling_family_size_3_domain_huawei.com
+companies,38053961984,IXBLUE Lannion,IXBLUE Lannion Group,sibling_family_size_3_domain_ixblue.com
+companies,37978650186,KONGSBERG Defence & Aerospace AS Asker,KONGSBERG Defence & Aerospace AS Asker Group,sibling_family_size_3_domain_kongsberg.com
+companies,36768811546,Lacroix Electronics Solutions Les Chères,Lacroix Electronics Solutions Les Chères Group,sibling_family_size_3_domain_lacroix-electronics.com
+companies,37990333017,LANDIS & GYR Nuremberg,LANDIS & GYR Nuremberg Group,sibling_family_size_3_domain_landisgyr.com
+companies,37991107448,LEGRAND Limoges,LEGRAND Limoges Group,sibling_family_size_3_domain_legrand.fr
+companies,37985329000,Nordic Semiconductor Trondheim,Nordic Semiconductor Trondheim Group,sibling_family_size_3_domain_nordicsemi.com
+companies,37978186008,Philips Cambridge (USA),Philips Cambridge (USA) Group,sibling_family_size_3_domain_philips.com
+companies,38032607300,PRECISION NEUROSCIENCE Santa Clara,PRECISION NEUROSCIENCE Santa Clara Group,sibling_family_size_3_domain_precisionneuro.io
+companies,38045399303,QORVO Zele,QORVO Zele Group,sibling_family_size_3_domain_qorvo.com
+companies,37987339842,Renault Software Labs 31,Renault Software Labs 31 Group,sibling_family_size_3_domain_renault.com
+companies,37980666627,SEMTECH FRANCE SAS,SEMTECH FRANCE SAS Group,sibling_family_size_3_domain_semtech.com
+companies,52001240419,Siemens Vienna,Siemens Vienna Group,sibling_family_size_3_domain_siemens.com
+companies,38056744567,Stellantis Vélizy,Stellantis Vélizy Group,sibling_family_size_3_domain_stellantis.com
+companies,38044936251,TE Connectivity Suisse - Schaffhausen,TE Connectivity Suisse - Schaffhausen Group,sibling_family_size_3_domain_te.com
+companies,37974779686,Veoneer Cergy,Veoneer Cergy Group,sibling_family_size_3_domain_veoneer.com
+companies,38044936255,Zodiac Data Systems Plaisir,Zodiac Data Systems Plaisir Group,sibling_family_size_3_domain_zodiacaerospace.com
+companies,37976792414,Bosch Automotive Stuttgart,Bosch Automotive Stuttgart Group,named_conglomerate_legacy_11722
+companies,51367959559,Bosch Automotive Stuttgart,Bosch Automotive Stuttgart Group,named_conglomerate_legacy_11722
