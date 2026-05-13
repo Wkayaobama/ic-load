@@ -21,8 +21,8 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS staging.stg_case_v2 AS
 WITH bronze_source AS (
     SELECT
         icalps_ticket_id::bigint                                        AS icalps_ticket_id,
-        TRIM(COALESCE(ticket_description, ''))                         AS subject,
-        TRIM(COALESCE(ticket_description, ''))                         AS content,
+        NULLIF(TRIM(COALESCE(case_description, '')), '')               AS subject,
+        NULLIF(TRIM(COALESCE(case_description, '')), '')               AS content,
         'external'::text                                                AS hs_pipeline,
         CASE TRIM(NULLIF(case_stage, ''))
             WHEN 'Solved'        THEN '2'
@@ -37,8 +37,8 @@ WITH bronze_source AS (
             ELSE               'MEDIUM'
         END                                                             AS hs_ticket_priority,
         CASE
-            WHEN NULLIF(TRIM(CAST(case_createdate AS text)), '') IS NULL THEN NULL
-            ELSE FLOOR(CAST(case_createdate AS numeric))::bigint
+            WHEN NULLIF(TRIM(CAST(case_createddate AS text)), '') IS NULL THEN NULL
+            ELSE FLOOR(CAST(case_createddate AS numeric))::bigint
         END                                                             AS createdate,
         CASE
             WHEN NULLIF(TRIM(CAST(case_closedate AS text)), '') IS NULL THEN NULL
@@ -51,28 +51,45 @@ WITH bronze_source AS (
             WHEN NULLIF(TRIM(CAST(assigned_userid AS text)), '') IS NULL THEN NULL
             ELSE FLOOR(CAST(assigned_userid AS numeric))::bigint
         END                                                             AS icalps_assigned_user_id,
-        NULLIF(LOWER(TRIM(COALESCE(assigned_useremail, ''))), '')      AS icalps_assigned_user_email,
         NULLIF(TRIM(CONCAT_WS(' ',
             NULLIF(TRIM(assigned_userfirstname), ''),
             NULLIF(TRIM(assigned_userlastname), '')
         )), '')                                                         AS icalps_assigned_user_name,
+        NULLIF(TRIM(COALESCE(company_website, '')), '')                AS icalps_company_website,
+        'IC''ALPS Legacy CRM'::text                                    AS source,
+        'silver'::text                                                 AS data_layer,
+        'legacy_only'::text                                            AS reconciliation_status,
+        -- ── NEW MAPPED COLUMNS ────────────────────────────────────────────────
+        FLOOR(CAST(case_caseid AS numeric))::bigint                        AS icalps_ticketid,
+        NULLIF(LOWER(TRIM(COALESCE(assigned_useremail, ''))), '')          AS hubspot_owner_id,
         CASE
             WHEN NULLIF(TRIM(CAST(case_primarycompanyid AS text)), '') IS NULL THEN NULL
             ELSE FLOOR(CAST(case_primarycompanyid AS numeric))::bigint
-        END                                                             AS icalps_company_id,
-        NULLIF(TRIM(COALESCE(company_name, '')), '')                   AS icalps_company_name,
-        NULLIF(TRIM(COALESCE(company_website, '')), '')                AS icalps_company_website,
+        END                                                                AS icalps_companyid,
+        NULLIF(TRIM(COALESCE(case_createdby, '')), '')                     AS hs_created_by_user_id,
+        NULLIF(TRIM(COALESCE(case_solutionnote, '')), '')                  AS icalps_solutionnote,
+        NULLIF(TRIM(COALESCE(case_referenceid, '')), '')                   AS icalps_ticket_referenceid,
+        CASE
+            WHEN NULLIF(TRIM(CAST(case_assigneduserid AS text)), '') IS NULL THEN NULL
+            WHEN TRIM(CAST(case_assigneduserid AS text)) = 'nan'           THEN NULL
+            ELSE FLOOR(CAST(case_assigneduserid AS numeric))::bigint
+        END                                                                AS icalps_ticketassigneduserid,
+        NULLIF(TRIM(COALESCE(case_problemtype, '')), '')                   AS icalps_ticketcasetype,
+        NULLIF(TRIM(COALESCE(company_name, '')), '')                       AS icalps_ticketcompanyname,
+        NULLIF(LOWER(TRIM(COALESCE(person_emailaddress, ''))), '')         AS icalps_ticketpersonemailaddress,
+        NULLIF(TRIM(COALESCE(person_firstname, '')), '')                   AS icalps_ticketpersonfirstname,
         CASE
             WHEN NULLIF(TRIM(CAST(case_primarypersonid AS text)), '') IS NULL THEN NULL
-            WHEN TRIM(CAST(case_primarypersonid AS text)) = 'nan'     THEN NULL
+            WHEN TRIM(CAST(case_primarypersonid AS text)) = 'nan'          THEN NULL
             ELSE FLOOR(CAST(REPLACE(CAST(case_primarypersonid AS text), '.0', '') AS numeric))::bigint
-        END                                                             AS icalps_contact_id,
-        NULLIF(TRIM(COALESCE(person_firstname, '')), '')               AS icalps_contact_firstname,
-        NULLIF(TRIM(COALESCE(person_lastname, '')), '')                AS icalps_contact_lastname,
-        NULLIF(LOWER(TRIM(COALESCE(person_emailaddress, ''))), '')     AS icalps_contact_email,
-        'IC''ALPS Legacy CRM'::text                                    AS source,
-        'silver'::text                                                 AS data_layer,
-        'legacy_only'::text                                            AS reconciliation_status
+        END                                                                AS icalps_ticketpersonid,
+        NULLIF(TRIM(COALESCE(person_lastname, '')), '')                    AS icalps_ticketpersonlastname,
+        NULLIF(TRIM(COALESCE(case_source, '')), '')                        AS icalps_ticketsource,
+        NULLIF(CONCAT_WS(' - ',
+            NULLIF(TRIM(COALESCE(case_status, '')), ''),
+            NULLIF(TRIM(COALESCE(case_stage,  '')), '')
+        ), '')                                                             AS icalps_ticketstage,
+        NULLIF(TRIM(COALESCE(case_problemnote, '')), '')                   AS icalps_problemnote
     FROM staging.stg_cases
     WHERE icalps_ticket_id IS NOT NULL
 ),
@@ -81,19 +98,19 @@ ranked AS (
         ROW_NUMBER() OVER (
             PARTITION BY icalps_ticket_id
             ORDER BY (
-                (CASE WHEN icalps_case_stage          IS NOT NULL THEN 1 ELSE 0 END) +
-                (CASE WHEN icalps_assigned_user_email IS NOT NULL THEN 1 ELSE 0 END) +
-                (CASE WHEN icalps_contact_id          IS NOT NULL THEN 1 ELSE 0 END) +
-                (CASE WHEN icalps_contact_email       IS NOT NULL THEN 1 ELSE 0 END) +
-                (CASE WHEN createdate                IS NOT NULL THEN 1 ELSE 0 END) +
-                (CASE WHEN icalps_company_id          IS NOT NULL THEN 1 ELSE 0 END)
+                (CASE WHEN icalps_case_stage               IS NOT NULL THEN 1 ELSE 0 END) +
+                (CASE WHEN hubspot_owner_id                IS NOT NULL THEN 1 ELSE 0 END) +
+                (CASE WHEN icalps_ticketpersonid           IS NOT NULL THEN 1 ELSE 0 END) +
+                (CASE WHEN icalps_ticketpersonemailaddress IS NOT NULL THEN 1 ELSE 0 END) +
+                (CASE WHEN createdate                      IS NOT NULL THEN 1 ELSE 0 END) +
+                (CASE WHEN icalps_companyid                IS NOT NULL THEN 1 ELSE 0 END)
             ) DESC,
             icalps_ticket_id ASC
         ) AS _rank
     FROM bronze_source
 )
 SELECT
-    icalps_ticket_id,
+    -- ── Retained existing columns ─────────────────────────────────────────────
     subject,
     content,
     hs_pipeline,
@@ -105,18 +122,28 @@ SELECT
     icalps_case_stage,
     icalps_case_priority,
     icalps_assigned_user_id,
-    icalps_assigned_user_email,
     icalps_assigned_user_name,
-    icalps_company_id,
-    icalps_company_name,
     icalps_company_website,
-    icalps_contact_id,
-    icalps_contact_firstname,
-    icalps_contact_lastname,
-    icalps_contact_email,
     source,
     data_layer,
-    reconciliation_status
+    reconciliation_status,
+    -- ── Mapped columns (HubSpot property name conventions) ───────────────────
+    icalps_ticketid,
+    hubspot_owner_id,
+    icalps_companyid,
+    hs_created_by_user_id,
+    icalps_solutionnote,
+    icalps_ticket_referenceid,
+    icalps_ticketassigneduserid,
+    icalps_ticketcasetype,
+    icalps_ticketcompanyname,
+    icalps_ticketpersonemailaddress,
+    icalps_ticketpersonfirstname,
+    icalps_ticketpersonid,
+    icalps_ticketpersonlastname,
+    icalps_ticketsource,
+    icalps_ticketstage,
+    icalps_problemnote
 FROM ranked
 WHERE _rank = 1
 WITH DATA;
