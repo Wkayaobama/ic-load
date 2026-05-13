@@ -140,6 +140,25 @@ class CleanupLedger:
             cur.execute(sql, (object_type, hubspot_id, status, error))
             conn.commit()
 
+    # -- Exemptions (load-bearing veto for archive) -------------------------
+
+    def exemption_set(self, object_type: str) -> set[str]:
+        """Return the set of hubspot_ids exempt from archive for this object_type.
+
+        Read by archiver.archive() (and gdpr_delete_contacts()) to filter the
+        pending list AFTER manifest read but BEFORE the HubSpot API call.
+        Load-bearing — edits to fct_cleanup_exemptions at any time before
+        archive() runs are honoured (including post-snapshot edits)."""
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT hubspot_id FROM {self.schema}.fct_cleanup_exemptions
+                WHERE object_type = %s
+                """,
+                (object_type,),
+            )
+            return {r[0] for r in cur.fetchall()}
+
     # -- GDPR ledger (Phase E2) ---------------------------------------------
 
     def gdpr_skip_set(self, object_type: str = "contacts") -> set[str]:

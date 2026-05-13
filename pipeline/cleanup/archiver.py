@@ -39,17 +39,36 @@ def archive(
     """
     manifest = ledger.manifest_ids(object_type)
     skip = ledger.archive_skip_set(object_type)
-    pending = [hid for (hid, _legacy, _label) in manifest if hid not in skip]
+    exempt = ledger.exemption_set(object_type)
+
+    pending: list[str] = []
+    excluded_now: list[str] = []
+    for hid, _legacy, _label in manifest:
+        if hid in skip:
+            continue
+        if hid in exempt:
+            excluded_now.append(hid)
+            continue
+        pending.append(hid)
+
+    # Audit trail: record an 'excluded' row per blocked id so status_summary
+    # reports it. Idempotent on re-run (UPSERT on PK).
+    for hid in excluded_now:
+        ledger.record_archive(
+            object_type=object_type, hubspot_id=hid,
+            status="excluded", error="in_fct_cleanup_exemptions",
+        )
 
     summary = {
-        "object_type": object_type,
-        "live":        live,
-        "manifest":    len(manifest),
+        "object_type":      object_type,
+        "live":             live,
+        "manifest":         len(manifest),
         "already_archived": len(skip),
-        "attempted":   len(pending),
-        "batches":     0,
-        "succeeded":   0,
-        "failed":      0,
+        "excluded":         len(excluded_now),
+        "attempted":        len(pending),
+        "batches":          0,
+        "succeeded":        0,
+        "failed":           0,
     }
 
     for batch in _chunk(pending, HUBSPOT_BATCH_LIMIT):
@@ -90,17 +109,19 @@ def gdpr_delete_contacts(
     contact. Slow but irreversible — operator opts in via gate.
     """
     archived_contacts = ledger.archive_skip_set("contacts")
-    already_purged = ledger.gdpr_skip_set("contacts")
-    pending = sorted(archived_contacts - already_purged)
+    already_purged    = ledger.gdpr_skip_set("contacts")
+    exempt            = ledger.exemption_set("contacts")
+    pending = sorted(archived_contacts - already_purged - exempt)
 
     summary = {
-        "object_type": "contacts",
-        "live":        live,
-        "eligible":    len(archived_contacts),
-        "already_purged": len(already_purged),
-        "attempted":   len(pending),
-        "succeeded":   0,
-        "failed":      0,
+        "object_type":     "contacts",
+        "live":            live,
+        "eligible":        len(archived_contacts),
+        "already_purged":  len(already_purged),
+        "excluded":        len(archived_contacts & exempt),
+        "attempted":       len(pending),
+        "succeeded":       0,
+        "failed":          0,
     }
 
     for hid in pending:

@@ -50,6 +50,24 @@ CREATE TABLE IF NOT EXISTS {schema}.fct_cleanup_gdpr (
     PRIMARY KEY (object_type, hubspot_id)
 );
 
+-- Operator-curated safe-list. Records listed here are EXEMPT from archive
+-- (the inverse of fct_cleanup_* views which list deletion targets).
+-- Read at archive() time in pipeline/cleanup/archiver.py — load-bearing,
+-- not just a selection-time filter, so post-snapshot edits are honoured.
+-- Valid object_type values: 'companies' | 'contacts' | 'deals' | 'calls'
+--                          | 'notes' | 'tasks' | 'meetings'. No CHECK
+-- constraint to keep coupling with selection.SUPPORTED_OBJECTS loose.
+CREATE TABLE IF NOT EXISTS {schema}.fct_cleanup_exemptions (
+    object_type    TEXT NOT NULL,
+    hubspot_id     TEXT NOT NULL,
+    legacy_id      TEXT,
+    label          TEXT,
+    reason         TEXT,
+    source         TEXT,
+    added_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (object_type, hubspot_id)
+);
+
 -- Phase F ledger: property-deletion outcomes. property_name is HubSpot's
 -- internal name (lowercase). 404 from HubSpot is captured as
 -- status='already_absent' and treated as success on re-run.

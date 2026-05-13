@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 import psycopg2  # type: ignore[import-not-found]
 
@@ -30,6 +31,7 @@ from pipeline.library_files.client import HubSpotClient
 from pipeline.library_files.config import Settings
 
 from .archiver import archive, gdpr_delete_contacts
+from .exemptions import load_exemptions_from_csv
 from .ledger import CleanupLedger
 from .properties import (
     JoinKeyGuardError,
@@ -45,10 +47,11 @@ from .selection import (
 )
 
 
-APPROVE_ARCHIVE_ENV     = "ICALPS_APPROVE_ARCHIVE"
-APPROVE_GDPR_ENV        = "ICALPS_APPROVE_GDPR_DELETE"
-APPROVE_PROPERTIES_ENV  = "ICALPS_APPROVE_PROP_DELETE"
-TOKEN_ENV               = "HUBSPOT_PROD_TOKEN"
+APPROVE_ARCHIVE_ENV          = "ICALPS_APPROVE_ARCHIVE"
+APPROVE_GDPR_ENV             = "ICALPS_APPROVE_GDPR_DELETE"
+APPROVE_PROPERTIES_ENV       = "ICALPS_APPROVE_PROP_DELETE"
+APPROVE_EXEMPTION_IMPORT_ENV = "ICALPS_APPROVE_EXEMPTION_IMPORT"
+TOKEN_ENV                    = "HUBSPOT_PROD_TOKEN"
 
 
 def _gate(env_var: str) -> bool:
@@ -255,6 +258,47 @@ def cmd_bootstrap_views(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- import-exemptions ------------------------------------------------------
+
+def cmd_import_exemptions(args: argparse.Namespace) -> int:
+    """Bulk-UPSERT operator-curated exemption rows into staging.fct_cleanup_exemptions.
+
+    Gated by ICALPS_APPROVE_EXEMPTION_IMPORT (default DRY-RUN that just
+    parses + counts). Source CSV schema (header row required):
+        object_type, hubspot_id, legacy_id, label, reason
+    `--tag` is stored as the `source` column so operators can filter/delete
+    a whole batch later (e.g. `WHERE source = 'operator_v1'`).
+    """
+    settings = _settings_or_die()
+    csv_path = Path(args.source)
+    if not csv_path.is_file():
+        print(f"source CSV does not exist: {csv_path}", file=sys.stderr)
+        return 2
+
+    live = _gate(APPROVE_EXEMPTION_IMPORT_ENV)
+    print(
+        f"cleanup runner — exemption import: "
+        f"{'LIVE' if live else 'DRY'} "
+        f"({APPROVE_EXEMPTION_IMPORT_ENV}={'1' if live else 'unset'})",
+        file=sys.stderr,
+    )
+    print(f"  source: {csv_path}", file=sys.stderr)
+    print(f"  tag:    {args.tag}", file=sys.stderr)
+
+    if not live:
+        from .exemptions import _iter_rows  # local import to keep CLI light
+        n = sum(1 for _ in _iter_rows(csv_path, args.tag))
+        result = {"imported": 0, "would_import": n, "live": False}
+        json.dump(result, sys.stdout, indent=2)
+        print()
+        return 0
+
+    n = load_exemptions_from_csv(settings.prod_postgres_dsn, csv_path, args.tag)
+    json.dump({"imported": n, "live": True}, sys.stdout, indent=2)
+    print()
+    return 0
+
+
 # -- status -----------------------------------------------------------------
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -323,6 +367,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Create/refresh staging.fct_cleanup_{companies,contacts,deals,communication} views.",
     )
     p_bv.set_defaults(func=cmd_bootstrap_views)
+
+    p_imp = sub.add_parser(
+        "import-exemptions",
+        help="Bulk-UPSERT operator-curated exemption rows into staging.fct_cleanup_exemptions (gated).",
+    )
+    p_imp.add_argument("--source", required=True,
+                       help="Path to CSV with columns: object_type, hubspot_id, legacy_id, label, reason.")
+    p_imp.add_argument("--tag", required=True,
+                       help="Identifier stored in the `source` column for this import batch.")
+    p_imp.set_defaults(func=cmd_import_exemptions)
 
     args = parser.parse_args(argv)
     return args.func(args)
