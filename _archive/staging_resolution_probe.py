@@ -28,7 +28,7 @@ class BronzeProbeSpec:
 
 def _default_bronze_root() -> Path:
     # Salvage-time default only: the clean repo does not own Bronze payloads.
-    return PROJECT_ROOT.parent / "bronze_layer"
+    return PROJECT_ROOT / "bronze_layer"
 
 
 def _default_specs(bronze_root: Path) -> list[BronzeProbeSpec]:
