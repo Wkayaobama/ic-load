@@ -86,7 +86,7 @@ def _records_to_rows(
             LibraryFileRow(
                 legacy_id=rec.legacy_library_id,
                 file_path=library_base_dir / rec.legacy_file_path / rec.legacy_file_name,
-                note_body=f"Legacy migrated file: {rec.legacy_file_name}",
+                note_body="File",
                 target_associations=targets,
             )
         )
