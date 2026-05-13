@@ -32,6 +32,7 @@ from pipeline.library_files.config import Settings
 
 from .archiver import archive, gdpr_delete_contacts
 from .exemptions import load_exemptions_from_csv
+from .groups import apply_group_renames, load_groups_from_csv
 from .ledger import CleanupLedger
 from .properties import (
     JoinKeyGuardError,
@@ -51,6 +52,8 @@ APPROVE_ARCHIVE_ENV          = "ICALPS_APPROVE_ARCHIVE"
 APPROVE_GDPR_ENV             = "ICALPS_APPROVE_GDPR_DELETE"
 APPROVE_PROPERTIES_ENV       = "ICALPS_APPROVE_PROP_DELETE"
 APPROVE_EXEMPTION_IMPORT_ENV = "ICALPS_APPROVE_EXEMPTION_IMPORT"
+APPROVE_GROUP_IMPORT_ENV     = "ICALPS_APPROVE_GROUP_IMPORT"
+APPROVE_GROUP_RENAME_ENV     = "ICALPS_APPROVE_GROUP_RENAME"
 TOKEN_ENV                    = "HUBSPOT_PROD_TOKEN"
 
 
@@ -299,6 +302,74 @@ def cmd_import_exemptions(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- import-groups + group-rename (Group salvation) ------------------------
+
+def cmd_import_groups(args: argparse.Namespace) -> int:
+    """Bulk-UPSERT operator-curated Group rename rows into
+    staging.fct_cleanup_groups. Gated by ICALPS_APPROVE_GROUP_IMPORT.
+    CSV schema: object_type, hubspot_id, original_name, target_name, reason.
+    """
+    settings = _settings_or_die()
+    csv_path = Path(args.source)
+    if not csv_path.is_file():
+        print(f"source CSV does not exist: {csv_path}", file=sys.stderr)
+        return 2
+    live = _gate(APPROVE_GROUP_IMPORT_ENV)
+    print(
+        f"cleanup runner — group import: {'LIVE' if live else 'DRY'} "
+        f"({APPROVE_GROUP_IMPORT_ENV}={'1' if live else 'unset'})",
+        file=sys.stderr,
+    )
+    print(f"  source: {csv_path}", file=sys.stderr)
+    print(f"  tag:    {args.tag}", file=sys.stderr)
+
+    if not live:
+        from .groups import _iter_rows
+        n = sum(1 for _ in _iter_rows(csv_path, args.tag))
+        json.dump({"imported": 0, "would_import": n, "live": False}, sys.stdout, indent=2)
+        print()
+        return 0
+
+    n = load_groups_from_csv(settings.prod_postgres_dsn, csv_path, args.tag)
+    json.dump({"imported": n, "live": True}, sys.stdout, indent=2)
+    print()
+    return 0
+
+
+def cmd_group_rename(args: argparse.Namespace) -> int:
+    """Apply pending Group renames in staging.fct_cleanup_groups.
+
+    For each row at status='pending' for the given --object:
+      - GET current name (if original_name not yet captured)
+      - PATCH /crm/v3/objects/{object}/{id} with {"name": target_name}
+      - Mark status='applied' on success, 'failed' with error otherwise
+    Gated by ICALPS_APPROVE_GROUP_RENAME.
+    """
+    settings = _settings_or_die()
+    live = _gate(APPROVE_GROUP_RENAME_ENV)
+    _print_banner(
+        scope=f"group-rename {args.object}",
+        archive_live=_gate(APPROVE_ARCHIVE_ENV),
+        gdpr_live=_gate(APPROVE_GDPR_ENV),
+        prop_live=_gate(APPROVE_PROPERTIES_ENV),
+    )
+    print(
+        f"  Group rename gate: {'LIVE' if live else 'DRY'} "
+        f"({APPROVE_GROUP_RENAME_ENV}={'1' if live else 'unset'})",
+        file=sys.stderr,
+    )
+    client = HubSpotClient.from_settings(settings)
+    summary = apply_group_renames(
+        client=client,
+        dsn=settings.prod_postgres_dsn,
+        object_type=args.object,
+        live=live,
+    )
+    json.dump(summary, sys.stdout, indent=2)
+    print()
+    return 1 if summary["failed"] else 0
+
+
 # -- status -----------------------------------------------------------------
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -377,6 +448,23 @@ def main(argv: list[str] | None = None) -> int:
     p_imp.add_argument("--tag", required=True,
                        help="Identifier stored in the `source` column for this import batch.")
     p_imp.set_defaults(func=cmd_import_exemptions)
+
+    p_gimp = sub.add_parser(
+        "import-groups",
+        help="Bulk-UPSERT operator-curated 'Group' rename rows into staging.fct_cleanup_groups (gated).",
+    )
+    p_gimp.add_argument("--source", required=True,
+                        help="Path to CSV with columns: object_type, hubspot_id, original_name, target_name, reason.")
+    p_gimp.add_argument("--tag", required=True,
+                        help="Identifier stored in the `source` column for this import batch.")
+    p_gimp.set_defaults(func=cmd_import_groups)
+
+    p_grn = sub.add_parser(
+        "group-rename",
+        help="Apply pending Group renames in staging.fct_cleanup_groups via PATCH (gated).",
+    )
+    p_grn.add_argument("--object", required=True, choices=("companies", "contacts", "deals"))
+    p_grn.set_defaults(func=cmd_group_rename)
 
     args = parser.parse_args(argv)
     return args.func(args)

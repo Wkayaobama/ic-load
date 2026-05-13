@@ -43,6 +43,24 @@ class HubSpotClient:
         resp = self._session.delete(url, timeout=self.timeout_s)
         resp.raise_for_status()
 
+    def get_company(self, company_id: str, *, properties: Optional[Iterable[str]] = None) -> dict:
+        """GET /crm/v3/objects/companies/{id}. Returns the company record with
+        any requested properties (e.g. 'name', 'domain'). Used by the Group
+        rename pattern to capture pre-state before PATCH."""
+        url = f"{self.base_url}/crm/v3/objects/companies/{company_id}"
+        params = {"properties": ",".join(properties)} if properties else None
+        resp = self._session.get(url, params=params, timeout=self.timeout_s)
+        resp.raise_for_status()
+        return resp.json()
+
+    def patch_company(self, company_id: str, properties: dict) -> dict:
+        """PATCH /crm/v3/objects/companies/{id}. Updates the supplied properties
+        only; other properties unchanged. Used by the Group rename pattern."""
+        url = f"{self.base_url}/crm/v3/objects/companies/{company_id}"
+        resp = self._session.patch(url, json={"properties": properties}, timeout=self.timeout_s)
+        resp.raise_for_status()
+        return resp.json()
+
     # -- CRM: notes ----------------------------------------------------------
 
     def create_note(
