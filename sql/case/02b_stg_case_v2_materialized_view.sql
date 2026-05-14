@@ -20,78 +20,78 @@
 CREATE MATERIALIZED VIEW IF NOT EXISTS staging.stg_case_v2 AS
 WITH bronze_source AS (
     SELECT
-        icalps_ticket_id::bigint                                        AS icalps_ticket_id,
-        NULLIF(TRIM(COALESCE(case_description, '')), '')               AS subject,
-        NULLIF(TRIM(COALESCE(case_description, '')), '')               AS content,
+        "Case_CaseId"::bigint                                           AS icalps_ticket_id,
+        NULLIF(TRIM(COALESCE("Case_Description", '')), '')             AS subject,
+        NULLIF(TRIM(COALESCE("Case_Description", '')), '')             AS content,
         'external'::text                                                AS hs_pipeline,
-        CASE TRIM(NULLIF(case_stage, ''))
+        CASE TRIM(NULLIF("Case_Stage", ''))
             WHEN 'Solved'        THEN '2'
             WHEN 'Investigating' THEN '1'   -- CONFIRM from portal 9201667 before live push
             WHEN 'Confirmed'     THEN '4'
             ELSE NULL
         END                                                             AS hs_pipeline_stage,
-        CASE UPPER(TRIM(COALESCE(case_priority, '')))
+        CASE UPPER(TRIM(COALESCE("Case_Priority", '')))
             WHEN 'HIGH'   THEN 'HIGH'
             WHEN 'MEDIUM' THEN 'MEDIUM'
             WHEN 'LOW'    THEN 'LOW'
             ELSE               'MEDIUM'
         END                                                             AS hs_ticket_priority,
         CASE
-            WHEN NULLIF(TRIM(CAST(case_createddate AS text)), '') IS NULL THEN NULL
-            ELSE FLOOR(CAST(case_createddate AS numeric))::bigint
+            WHEN NULLIF(TRIM("Case_CreatedDate"::text), '') IS NULL THEN NULL
+            ELSE (EXTRACT(EPOCH FROM "Case_CreatedDate"::text::timestamp) * 1000)::bigint
         END                                                             AS createdate,
         CASE
-            WHEN NULLIF(TRIM(CAST(case_closedate AS text)), '') IS NULL THEN NULL
-            ELSE FLOOR(CAST(case_closedate AS numeric))::bigint
+            WHEN NULLIF(TRIM("Case_CloseDate"::text), '') IS NULL THEN NULL
+            ELSE (EXTRACT(EPOCH FROM "Case_CloseDate"::text::timestamp) * 1000)::bigint
         END                                                             AS closed_date,
-        NULLIF(TRIM(COALESCE(case_status, '')), '')                    AS icalps_case_status,
-        NULLIF(TRIM(COALESCE(case_stage, '')), '')                     AS icalps_case_stage,
-        NULLIF(TRIM(COALESCE(case_priority, '')), '')                  AS icalps_case_priority,
+        NULLIF(TRIM(COALESCE("Case_Status", '')), '')                  AS icalps_case_status,
+        NULLIF(TRIM(COALESCE("Case_Stage", '')), '')                   AS icalps_case_stage,
+        NULLIF(TRIM(COALESCE("Case_Priority", '')), '')                AS icalps_case_priority,
         CASE
-            WHEN NULLIF(TRIM(CAST(assigned_userid AS text)), '') IS NULL THEN NULL
-            ELSE FLOOR(CAST(assigned_userid AS numeric))::bigint
+            WHEN NULLIF(TRIM(CAST("Assigned_UserId" AS text)), '') IS NULL THEN NULL
+            ELSE FLOOR(CAST("Assigned_UserId" AS numeric))::bigint
         END                                                             AS icalps_assigned_user_id,
         NULLIF(TRIM(CONCAT_WS(' ',
-            NULLIF(TRIM(assigned_userfirstname), ''),
-            NULLIF(TRIM(assigned_userlastname), '')
+            NULLIF(TRIM("Assigned_UserFirstName"), ''),
+            NULLIF(TRIM("Assigned_UserLastName"), '')
         )), '')                                                         AS icalps_assigned_user_name,
-        NULLIF(TRIM(COALESCE(company_website, '')), '')                AS icalps_company_website,
+        NULLIF(TRIM(COALESCE("Company_WebSite", '')), '')              AS icalps_company_website,
         'IC''ALPS Legacy CRM'::text                                    AS source,
         'silver'::text                                                 AS data_layer,
         'legacy_only'::text                                            AS reconciliation_status,
         -- ── NEW MAPPED COLUMNS ────────────────────────────────────────────────
-        FLOOR(CAST(case_caseid AS numeric))::bigint                        AS icalps_ticketid,
-        NULLIF(LOWER(TRIM(COALESCE(assigned_useremail, ''))), '')          AS hubspot_owner_id,
+        FLOOR(CAST("Case_CaseId" AS numeric))::bigint                      AS icalps_ticketid,
+        NULLIF(LOWER(TRIM(COALESCE("Assigned_UserEmail", ''))), '')        AS hubspot_owner_id,
         CASE
-            WHEN NULLIF(TRIM(CAST(case_primarycompanyid AS text)), '') IS NULL THEN NULL
-            ELSE FLOOR(CAST(case_primarycompanyid AS numeric))::bigint
+            WHEN NULLIF(TRIM(CAST("Case_PrimaryCompanyId" AS text)), '') IS NULL THEN NULL
+            ELSE FLOOR(CAST("Case_PrimaryCompanyId" AS numeric))::bigint
         END                                                                AS icalps_companyid,
-        NULLIF(TRIM(COALESCE(case_createdby, '')), '')                     AS hs_created_by_user_id,
-        NULLIF(TRIM(COALESCE(case_solutionnote, '')), '')                  AS icalps_solutionnote,
-        NULLIF(TRIM(COALESCE(case_referenceid, '')), '')                   AS icalps_ticket_referenceid,
+        NULLIF(TRIM(COALESCE("Case_CreatedBy", '')), '')                   AS hs_created_by_user_id,
+        NULLIF(TRIM(COALESCE("Case_SolutionNote", '')), '')                AS icalps_solutionnote,
+        NULLIF(TRIM(COALESCE("Case_CustomerRef", '')), '')                 AS icalps_ticket_referenceid,
         CASE
-            WHEN NULLIF(TRIM(CAST(case_assigneduserid AS text)), '') IS NULL THEN NULL
-            WHEN TRIM(CAST(case_assigneduserid AS text)) = 'nan'           THEN NULL
-            ELSE FLOOR(CAST(case_assigneduserid AS numeric))::bigint
+            WHEN NULLIF(TRIM(CAST("Case_AssignedUserId" AS text)), '') IS NULL THEN NULL
+            WHEN TRIM(CAST("Case_AssignedUserId" AS text)) = 'nan'         THEN NULL
+            ELSE FLOOR(CAST("Case_AssignedUserId" AS numeric))::bigint
         END                                                                AS icalps_ticketassigneduserid,
-        NULLIF(TRIM(COALESCE(case_problemtype, '')), '')                   AS icalps_ticketcasetype,
-        NULLIF(TRIM(COALESCE(company_name, '')), '')                       AS icalps_ticketcompanyname,
-        NULLIF(LOWER(TRIM(COALESCE(person_emailaddress, ''))), '')         AS icalps_ticketpersonemailaddress,
-        NULLIF(TRIM(COALESCE(person_firstname, '')), '')                   AS icalps_ticketpersonfirstname,
+        NULLIF(TRIM(COALESCE("Case_ProblemType", '')), '')                 AS icalps_ticketcasetype,
+        NULLIF(TRIM(COALESCE("Company_Name", '')), '')                     AS icalps_ticketcompanyname,
+        NULLIF(LOWER(TRIM(COALESCE("Person_EmailAddress", ''))), '')       AS icalps_ticketpersonemailaddress,
+        NULLIF(TRIM(COALESCE("Person_FirstName", '')), '')                 AS icalps_ticketpersonfirstname,
         CASE
-            WHEN NULLIF(TRIM(CAST(case_primarypersonid AS text)), '') IS NULL THEN NULL
-            WHEN TRIM(CAST(case_primarypersonid AS text)) = 'nan'          THEN NULL
-            ELSE FLOOR(CAST(REPLACE(CAST(case_primarypersonid AS text), '.0', '') AS numeric))::bigint
+            WHEN NULLIF(TRIM(CAST("Case_PrimaryPersonId" AS text)), '') IS NULL THEN NULL
+            WHEN TRIM(CAST("Case_PrimaryPersonId" AS text)) = 'nan'        THEN NULL
+            ELSE FLOOR(CAST(REPLACE(CAST("Case_PrimaryPersonId" AS text), '.0', '') AS numeric))::bigint
         END                                                                AS icalps_ticketpersonid,
-        NULLIF(TRIM(COALESCE(person_lastname, '')), '')                    AS icalps_ticketpersonlastname,
-        NULLIF(TRIM(COALESCE(case_source, '')), '')                        AS icalps_ticketsource,
+        NULLIF(TRIM(COALESCE("Person_LastName", '')), '')                  AS icalps_ticketpersonlastname,
+        NULLIF(TRIM(COALESCE("Case_Source", '')), '')                      AS icalps_ticketsource,
         NULLIF(CONCAT_WS(' - ',
-            NULLIF(TRIM(COALESCE(case_status, '')), ''),
-            NULLIF(TRIM(COALESCE(case_stage,  '')), '')
+            NULLIF(TRIM(COALESCE("Case_Status", '')), ''),
+            NULLIF(TRIM(COALESCE("Case_Stage",  '')), '')
         ), '')                                                             AS icalps_ticketstage,
-        NULLIF(TRIM(COALESCE(case_problemnote, '')), '')                   AS icalps_problemnote
+        NULLIF(TRIM(COALESCE("Case_ProblemNote", '')), '')                 AS icalps_problemnote
     FROM staging.stg_cases
-    WHERE icalps_ticket_id IS NOT NULL
+    WHERE "Case_CaseId" IS NOT NULL
 ),
 ranked AS (
     SELECT *,
