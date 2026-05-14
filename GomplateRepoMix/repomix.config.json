@@ -55,7 +55,8 @@
       "gold_layer/**",
       "memory/**",
       "artifacts/**",
-      "**/hubspot/**"
+      "**/hubspot/**",
+      "../_scratch/**"
     ]
   }
 }

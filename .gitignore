@@ -15,6 +15,7 @@ rendered_sql/
 bronze_layer/
 sql/library/*.csv
 gold_layer/
+_scratch/
 memory/
 benchmark/
 artifacts/

@@ -75,7 +75,13 @@ class DuckDBBronzeLoader:
         hash_table = f"{schema}.stg_{duckdb_table.replace('bronze_', '')}_hashes"
 
         all_cols = [d[0] for d in self.conn.execute(f"SELECT * FROM {duckdb_table} LIMIT 0").description]
-        concat_expr = " || '|' || ".join([f"COALESCE(CAST({col} AS VARCHAR), '')" for col in all_cols])
+        # Quote each column identifier so dotted names like 'Companies.icalps_company_id'
+        # (left over from denormalised JOIN columns in the source CSV) aren't parsed by
+        # DuckDB as table.column references — they're a single column name. Escape any
+        # embedded double-quote by doubling it (standard SQL identifier-quoting).
+        concat_expr = " || '|' || ".join(
+            [f'COALESCE(CAST("{col.replace(chr(34), chr(34)*2)}" AS VARCHAR), \'\')' for col in all_cols]
+        )
         self.conn.execute(
             f"""
             CREATE OR REPLACE TABLE {duckdb_table}_hashed AS

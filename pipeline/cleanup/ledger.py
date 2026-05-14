@@ -45,6 +45,40 @@ class CleanupLedger:
             cur.execute(sql)
             conn.commit()
 
+    def bootstrap_views(self) -> None:
+        """Materialise staging.fct_cleanup_{companies,contacts,deals}.
+
+        Idempotent: each statement is CREATE OR REPLACE VIEW. Does not touch
+        the manifest / archive / gdpr / property ledger tables — call
+        ``bootstrap()`` first if those don't exist yet.
+
+        The communication selection view lives in a separate SQL file and is
+        loaded by ``bootstrap_communication_view()`` because its column names
+        depend on the engagement-table schema (calls/notes/tasks shapes
+        verified during the bronze-path-and-cleanup-views work).
+        """
+        ddl = (_SQL_DIR / "init_cleanup_views.sql").read_text(encoding="utf-8")
+        sql = ddl.replace("{schema}", self.schema)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            conn.commit()
+
+    def bootstrap_communication_view(self) -> None:
+        """Materialise staging.fct_cleanup_communication.
+
+        Selection-only: the cleanup runner does not currently support
+        archiving engagements (calls/notes/tasks/meetings) —
+        ``selection.SUPPORTED_OBJECTS`` excludes them. The view exists so
+        operators can snapshot the communications cohort into the manifest
+        for review; archiving is gated until the engagement dispatch is
+        implemented in archiver.py / client.py.
+        """
+        ddl = (_SQL_DIR / "init_communication_cleanup_view.sql").read_text(encoding="utf-8")
+        sql = ddl.replace("{schema}", self.schema)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            conn.commit()
+
     # -- Manifest (Phase B) --------------------------------------------------
 
     def upsert_manifest_rows(self, rows: Iterable[Mapping[str, object]]) -> int:
@@ -105,6 +139,25 @@ class CleanupLedger:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql, (object_type, hubspot_id, status, error))
             conn.commit()
+
+    # -- Exemptions (load-bearing veto for archive) -------------------------
+
+    def exemption_set(self, object_type: str) -> set[str]:
+        """Return the set of hubspot_ids exempt from archive for this object_type.
+
+        Read by archiver.archive() (and gdpr_delete_contacts()) to filter the
+        pending list AFTER manifest read but BEFORE the HubSpot API call.
+        Load-bearing — edits to fct_cleanup_exemptions at any time before
+        archive() runs are honoured (including post-snapshot edits)."""
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT hubspot_id FROM {self.schema}.fct_cleanup_exemptions
+                WHERE object_type = %s
+                """,
+                (object_type,),
+            )
+            return {r[0] for r in cur.fetchall()}
 
     # -- GDPR ledger (Phase E2) ---------------------------------------------
 

@@ -25,11 +25,23 @@ import psycopg2  # type: ignore[import-not-found]
 
 # HubSpot's plural object names match the table names under hubspot.* and the
 # REST endpoints. Everything in cleanup uses plural consistently.
-SUPPORTED_OBJECTS = ("companies", "contacts", "deals")
+#
+# Engagement types (calls / meetings / notes / tasks) carry no icalps_*_id
+# mirror column in the StackSync gold layer — the legacy bridge lives in
+# staging.fct_communication_* tables, not on hubspot.{type}. Their _OBJECT_META
+# entry therefore uses legacy_id_col=None and plan_from_where emits
+# `NULL::text AS legacy_id` for these. `hubspot.emails` is not synced by
+# StackSync at all; archiving emails would require a direct REST path and is
+# intentionally out of scope here.
+SUPPORTED_OBJECTS = (
+    "companies", "contacts", "deals",
+    "calls", "meetings", "notes", "tasks",
+)
 
 
-# Per-object metadata: legacy-id column on the hubspot.* table, label
-# expression for human-readable manifest entries.
+# Per-object metadata: legacy-id column on the hubspot.* table (None for
+# engagements which have no mirror column), label expression for
+# human-readable manifest entries.
 _OBJECT_META = {
     "companies": {
         "legacy_id_col": "icalps_company_id",
@@ -44,6 +56,10 @@ _OBJECT_META = {
         "legacy_id_col": "icalps_deal_id",
         "label_expr":    "dealname",
     },
+    "calls":    {"legacy_id_col": None, "label_expr": "call_title"},
+    "meetings": {"legacy_id_col": None, "label_expr": "meeting_name"},
+    "notes":    {"legacy_id_col": None, "label_expr": "note_body"},
+    "tasks":    {"legacy_id_col": None, "label_expr": "task_title"},
 }
 
 
@@ -68,10 +84,18 @@ def plan_from_where(object_type: str, where: str | None) -> SelectionPlan:
     # icalps_*_id is varchar in StackSync's mirror — guard against both NULL
     # and empty string. The legacy bigint assumption was wrong (see
     # init_fct_view.sql cast comment for the discovery and the fix).
-    predicate = where.strip() if where else f"{legacy_col} IS NOT NULL AND {legacy_col} <> ''"
+    # Engagement types have no legacy column on the mirror; emit NULL and
+    # require an explicit --where (default predicate would be meaningless).
+    if legacy_col is None:
+        legacy_select     = "NULL::text AS legacy_id"
+        default_predicate = "id IS NOT NULL"
+    else:
+        legacy_select     = f"{legacy_col} AS legacy_id"
+        default_predicate = f"{legacy_col} IS NOT NULL AND {legacy_col} <> ''"
+    predicate = where.strip() if where else default_predicate
     sql = (
         f"SELECT id::text AS hubspot_id, "
-        f"{legacy_col} AS legacy_id, "
+        f"{legacy_select}, "
         f"{label_expr} AS label "
         f"FROM hubspot.{object_type} "
         f"WHERE {predicate}"
